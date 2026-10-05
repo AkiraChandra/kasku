@@ -2,49 +2,40 @@
 
 ## Baseline Resources
 
-> **TODO**: Fill from actual measurement after first deployment.
+DiuKur pada 5 Oktober 2026 (Live Container Measurement):
 
 | Service    | Memory Limit | Expected Baseline | Alert Threshold |
 |------------|-------------|-------------------|-----------------|
-| postgres   | 256MB       | TBD MB            | >200MB          |
-| api        | 192MB       | TBD MB            | >150MB          |
-| caddy      | 64MB        | TBD MB            | >50MB           |
+| postgres   | 256MB       | ~10.4 MB          | >200MB          |
+| api        | 192MB       | ~15.7 MB          | >150MB          |
+| caddy      | 64MB        | ~24.6 MB          | >50MB           |
+
+Total Kasku stack: ~50.7 MB RAM.
 
 ## Backup Procedure
 
-1. Trigger pg_dump:
+1. Trigger pg_dump (Plain SQL Gzip):
    ```bash
-   docker compose exec postgres pg_dump -U kasku kasku > backup_$(date +%Y%m%d_%H%M%S).sql
+   bash scripts/backup.sh
    ```
 
-2. Encrypt backup:
+2. Manual trigger:
    ```bash
-   gpg --symmetric --cipher-algo AES256 backup_<timestamp>.sql
-   rm backup_<timestamp>.sql
+   docker compose exec -T postgres pg_dump -U kasku kasku | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
    ```
-
-3. Upload to offsite storage (S3, rclone, etc.)
 
 ## Restore Procedure
 
-1. Download and decrypt backup:
+1. Test restore via script:
    ```bash
-   gpg --decrypt backup_<timestamp>.sql.gpg > backup_restore.sql
+   bash scripts/backup-restore-test.sh
    ```
 
-2. Stop api:
+2. Manual restore:
    ```bash
    docker compose stop api
-   ```
-
-3. Restore:
-   ```bash
-   docker compose exec -T postgres psql -U kasku kasku < backup_restore.sql
-   ```
-
-4. Restart api:
-   ```bash
-   docker compose up -d api
+   gunzip -c backup_<timestamp>.sql.gz | docker compose exec -T postgres psql -U kasku kasku
+   docker compose start api
    ```
 
 ## Key Rotation
@@ -84,7 +75,7 @@
 docker compose ps
 
 # Check api health
-curl http://localhost/api/health
+curl http://localhost/health
 
 # Check postgres
 docker compose exec postgres pg_isready -U kasku

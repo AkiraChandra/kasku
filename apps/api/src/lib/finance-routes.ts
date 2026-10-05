@@ -4,11 +4,14 @@ import { z } from 'zod'
 import { failure, success } from '../index.js'
 import { parseAmount, AmountParseError } from './money.js'
 import type { AuthRepository } from './auth-repo.js'
-import type { FinanceRepository, FinanceTransactionType } from './finance-repo.js'
+import type { FinanceRepository, FinanceTransactionType, DebtType } from './finance-repo.js'
 
 const sessionCookie = 'kasku_session'
 const accountTypes = ['cash', 'bank', 'ewallet', 'credit_card', 'investment', 'other'] as const
 const transactionTypes = ['income', 'expense', 'transfer'] as const
+const budgetPeriods = ['weekly', 'monthly', 'quarterly', 'yearly'] as const
+const debtTypes = ['lent_out', 'borrowed'] as const
+const debtStatuses = ['active', 'settled', 'cancelled'] as const
 
 const accountSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -35,6 +38,43 @@ const transactionSchema = z.object({
   merchant: z.string().trim().max(150).optional(),
 })
 
+const budgetSchema = z.object({
+  categoryId: z.string().uuid().optional(),
+  name: z.string().trim().min(1).max(100),
+  amount: z.union([z.string(), z.number()]),
+  period: z.enum(budgetPeriods),
+  startDate: z.string().datetime().optional(),
+})
+
+const updateBudgetSchema = z.object({
+  categoryId: z.string().uuid().nullable().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  amount: z.union([z.string(), z.number()]).optional(),
+  period: z.enum(budgetPeriods).optional(),
+})
+
+// ── Debt schemas ──────────────────────────────────────────────
+
+const debtSchema = z.object({
+  type: z.enum(debtTypes),
+  personName: z.string().trim().min(1).max(200),
+  amount: z.union([z.string(), z.number()]),
+  description: z.string().trim().max(500).optional(),
+  dueDate: z.string().datetime().optional(),
+})
+
+const updateDebtSchema = z.object({
+  description: z.string().trim().max(500).optional(),
+  dueDate: z.string().datetime().nullable().optional(),
+  status: z.enum(debtStatuses).optional(),
+})
+
+const paymentSchema = z.object({
+  amount: z.union([z.string(), z.number()]),
+  note: z.string().trim().max(500).optional(),
+  paidAt: z.string().datetime().optional(),
+})
+
 type Status = 200 | 201 | 400 | 401 | 404 | 409
 
 function validationError(error: z.ZodError) {
@@ -49,6 +89,12 @@ function parseMoney(value: string | number) {
     if (error instanceof AmountParseError) throw error
     throw new AmountParseError('INVALID_AMOUNT', 'Jumlah tidak valid')
   }
+}
+
+function parseBudgetAmount(value: string | number) {
+  const amount = parseMoney(value)
+  if (amount <= 0) throw new AmountParseError('INVALID_AMOUNT', 'Jumlah budget harus lebih besar dari nol')
+  return amount
 }
 
 export function createFinanceRoutes(financeRepo: FinanceRepository, authRepo?: AuthRepository) {
@@ -170,6 +216,249 @@ export function createFinanceRoutes(financeRepo: FinanceRepository, authRepo?: A
     if (!deleted) return c.json(failure('NOT_FOUND', 'Transaksi tidak ditemukan'), 404)
     await financeRepo.audit(user, 'delete', 'transaction', id)
     return c.json(success({ id, deleted: true }))
+  })
+
+  app.get('/budgets', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const budgets = await financeRepo.listBudgets(user)
+    const budgetsWithProgress = await Promise.all(budgets.map(async (budget) => {
+      try { return await financeRepo.getBudgetProgress(user, budget.id) } catch { return null }
+    }))
+    return c.json(success(budgetsWithProgress.filter(Boolean)))
+  })
+
+  app.post('/budgets', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json(failure('INVALID_REQUEST', 'JSON request tidak valid'), 400) }
+    const parsed = budgetSchema.safeParse(body)
+    if (!parsed.success) return c.json(validationError(parsed.error), 400)
+    let amount: number
+    try { amount = parseBudgetAmount(parsed.data.amount) } catch (error) {
+      const message = error instanceof Error ? error.message : 'Jumlah tidak valid'
+      return c.json(failure('INVALID_AMOUNT', message, 'amount'), 400)
+    }
+    const row = await financeRepo.createBudget(user, { ...parsed.data, amount })
+    await financeRepo.audit(user, 'create', 'budget', row.id, { name: row.name, amount: row.amount, period: row.period })
+    return c.json(success(row), 201)
+  })
+
+  app.patch('/budgets/:id', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json(failure('INVALID_REQUEST', 'JSON request tidak valid'), 400) }
+    const parsed = updateBudgetSchema.safeParse(body)
+    if (!parsed.success) return c.json(validationError(parsed.error), 400)
+    if (parsed.data.amount !== undefined) {
+      try { parseBudgetAmount(parsed.data.amount) } catch (error) {
+        const message = error instanceof Error ? error.message : 'Jumlah tidak valid'
+        return c.json(failure('INVALID_AMOUNT', message, 'amount'), 400)
+      }
+    }
+    try {
+      const row = await financeRepo.updateBudget(user, id, { ...parsed.data, amount: parsed.data.amount !== undefined ? parseBudgetAmount(parsed.data.amount as string | number) : undefined })
+      await financeRepo.audit(user, 'update', 'budget', id, parsed.data)
+      return c.json(success(row))
+    } catch (error) {
+      if (error instanceof Error && error.message === 'BUDGET_NOT_FOUND') return c.json(failure('NOT_FOUND', 'Budget tidak ditemukan'), 404)
+      throw error
+    }
+  })
+
+  app.delete('/budgets/:id', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    const deleted = await financeRepo.deleteBudget(user, id)
+    if (!deleted) return c.json(failure('NOT_FOUND', 'Budget tidak ditemukan'), 404)
+    await financeRepo.audit(user, 'delete', 'budget', id)
+    return c.json(success({ id, deleted: true }))
+  })
+
+  app.get('/budgets/:id/progress', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    try {
+      const progress = await financeRepo.getBudgetProgress(user, id)
+      return c.json(success(progress))
+    } catch (error) {
+      if (error instanceof Error && error.message === 'BUDGET_NOT_FOUND') return c.json(failure('NOT_FOUND', 'Budget tidak ditemukan'), 404)
+      throw error
+    }
+  })
+
+  // ── Debt routes ──────────────────────────────────────────────
+
+  app.get('/debts', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const typeParam = c.req.query('type')
+    if (typeParam && !debtTypes.includes(typeParam as DebtType)) {
+      return c.json(failure('VALIDATION_ERROR', 'Jenis hutang tidak valid', 'type'), 400)
+    }
+    const type = typeParam as DebtType | undefined
+    return c.json(success(await financeRepo.listDebts(user, type)))
+  })
+
+  app.post('/debts', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const key = c.req.header('Idempotency-Key')?.trim()
+    if (!key || key.length > 200) return c.json(failure('IDEMPOTENCY_KEY_REQUIRED', 'Header Idempotency-Key wajib diisi'), 400)
+    const replay = await financeRepo.getIdempotency(user, key)
+    if (replay) return c.json(replay.response as any, 200)
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json(failure('INVALID_REQUEST', 'JSON request tidak valid'), 400) }
+    const parsed = debtSchema.safeParse(body)
+    if (!parsed.success) return c.json(validationError(parsed.error), 400)
+    let amount: number
+    try { amount = parseMoney(parsed.data.amount) } catch (error) {
+      const message = error instanceof Error ? error.message : 'Jumlah tidak valid'
+      return c.json(failure('INVALID_AMOUNT', message, 'amount'), 400)
+    }
+    if (amount <= 0) return c.json(failure('INVALID_AMOUNT', 'Jumlah harus lebih besar dari nol', 'amount'), 400)
+    try {
+      const row = await financeRepo.createDebt(user, {
+        type: parsed.data.type,
+        personName: parsed.data.personName,
+        amount,
+        description: parsed.data.description,
+        dueDate: parsed.data.dueDate,
+      })
+      const response = success({ ...row, personName: parsed.data.personName })
+      await financeRepo.saveIdempotency(user, key, response, 201)
+      await financeRepo.audit(user, 'create', 'debt', row.id, { type: row.type, amount: row.amount, personName: parsed.data.personName })
+      return c.json(response, 201)
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'DEBT_CREATE_FAILED'
+      return c.json(failure(code, 'Gagal membuat hutang'), 400)
+    }
+  })
+
+  app.get('/debts/:id', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    const debt = await financeRepo.getDebt(user, id)
+    if (!debt) return c.json(failure('NOT_FOUND', 'Hutang tidak ditemukan'), 404)
+    return c.json(success(debt))
+  })
+
+  app.patch('/debts/:id', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json(failure('INVALID_REQUEST', 'JSON request tidak valid'), 400) }
+    const parsed = updateDebtSchema.safeParse(body)
+    if (!parsed.success) return c.json(validationError(parsed.error), 400)
+    try {
+      const row = await financeRepo.updateDebt(user, id, parsed.data)
+      await financeRepo.audit(user, 'update', 'debt', id, parsed.data)
+      return c.json(success(row))
+    } catch (error) {
+      if (error instanceof Error && error.message === 'DEBT_NOT_FOUND') return c.json(failure('NOT_FOUND', 'Hutang tidak ditemukan'), 404)
+      throw error
+    }
+  })
+
+  app.delete('/debts/:id', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    const deleted = await financeRepo.deleteDebt(user, id)
+    if (!deleted) return c.json(failure('NOT_FOUND', 'Hutang tidak ditemukan'), 404)
+    await financeRepo.audit(user, 'delete', 'debt', id)
+    return c.json(success({ id, deleted: true }))
+  })
+
+  app.post('/debts/:id/payments', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const debtId = c.req.param('id')
+    const key = c.req.header('Idempotency-Key')?.trim()
+    if (!key || key.length > 200) return c.json(failure('IDEMPOTENCY_KEY_REQUIRED', 'Header Idempotency-Key wajib diisi'), 400)
+    const replay = await financeRepo.getIdempotency(user, key)
+    if (replay) return c.json(replay.response as any, 200)
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json(failure('INVALID_REQUEST', 'JSON request tidak valid'), 400) }
+    const parsed = paymentSchema.safeParse(body)
+    if (!parsed.success) return c.json(validationError(parsed.error), 400)
+    let amount: number
+    try { amount = parseMoney(parsed.data.amount) } catch (error) {
+      const message = error instanceof Error ? error.message : 'Jumlah tidak valid'
+      return c.json(failure('INVALID_AMOUNT', message, 'amount'), 400)
+    }
+    if (amount <= 0) return c.json(failure('INVALID_AMOUNT', 'Jumlah harus lebih besar dari nol', 'amount'), 400)
+    try {
+      const result = await financeRepo.recordDebtPayment(user, debtId, {
+        amount,
+        note: parsed.data.note,
+        paidAt: parsed.data.paidAt,
+      })
+      const response = success(result)
+      await financeRepo.saveIdempotency(user, key, response, 201)
+      await financeRepo.audit(user, 'payment', 'debt', debtId, { amount: result.payment.amount })
+      return c.json(response, 201)
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'PAYMENT_FAILED'
+      const messages: Record<string, string> = {
+        DEBT_NOT_FOUND: 'Hutang tidak ditemukan',
+        DEBT_NOT_ACTIVE: 'Hutang sudah lunas atau dibatalkan',
+        PAYMENT_EXCEEDS_REMAINING: 'Pembayaran melebihi sisa hutang',
+        INVALID_AMOUNT: 'Jumlah tidak valid',
+      }
+      const status: Status = code === 'DEBT_NOT_FOUND' ? 404 : 400
+      return c.json(failure(code, messages[code] ?? 'Pembayaran gagal'), status)
+    }
+  })
+
+  app.post('/debts/:id/settle', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const id = c.req.param('id')
+    try {
+      const row = await financeRepo.settleDebt(user, id)
+      await financeRepo.audit(user, 'settle', 'debt', id)
+      return c.json(success(row))
+    } catch (error) {
+      if (error instanceof Error && error.message === 'DEBT_NOT_FOUND') return c.json(failure('NOT_FOUND', 'Hutang tidak ditemukan'), 404)
+      throw error
+    }
+  })
+
+  app.get('/dashboard/summary', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const summary = await financeRepo.getDashboardSummary(user)
+    return c.json(success(summary))
+  })
+
+  app.get('/dashboard/cashflow', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const period = (c.req.query('period') as 'daily' | 'weekly') || 'daily'
+    const cashflow = await financeRepo.getDashboardCashflow(user, period)
+    return c.json(success(cashflow))
+  })
+
+  app.get('/dashboard/categories', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const categories = await financeRepo.getDashboardCategories(user)
+    return c.json(success(categories))
+  })
+
+  app.get('/dashboard/trends', async (c) => {
+    const user = await requireUser(c)
+    if (user instanceof Response) return user
+    const trends = await financeRepo.getDashboardTrends(user)
+    return c.json(success(trends))
   })
 
   return app

@@ -17,3 +17,23 @@
 | Category aliases | Stored in merchant_rules, not in categories table | Schema doesn't have aliases[] on categories; resolved at query time |
 | Deploy method | Build on VPS (dev only) | Prod: GitHub Actions → GHCR → VPS pull only |
 | Postgres port | Exposed on 5432 for local dev/debug | Prod: consider bind to 127.0.0.1 only |
+
+## 2026-10-04 — Kasku M8 + M2b Implementation
+
+| Decision | Value | Rationale |
+|----------|-------|-----------|
+| Auth resolver | `auth-resolver.ts` — unifies session cookie & X-Api-Key | Reports/digest/ingest/2FA routes need flexible auth |
+| Backup format | Plain SQL gzip (`pg_dump \| gzip`) | Reliable restore, `grep`-compatible |
+| 2FA | RFC 6238 TOTP, mounted at `/api/v1/auth/2fa` | Secret stored in-memory store for MVP; DB persistence planned |
+| Ingest auth | X-Api-Key header via `resolveUser(pool)` | n8n WF11-WF15 call `/ingest/transactions` with HMAC-signed webhook payloads |
+| n8n timezone | `TIMEZONE=Asia/Jakarta` | All workflow schedules run at 20:00 WIB |
+| Digest schedules | WF3 weekly: Sunday 20:00 WIB; WF4 monthly: 1st of month 20:00 WIB | Per blueprint Section 8 |
+
+## 2026-10-05 — Kasku M0–M8 Baseline Resources
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Total Kasku RAM | ~50.7 MB | postgres 10.4MB + api 15.7MB + caddy 24.6MB |
+| Swap usage | 1688 MB of 2047 MB | VPS has 2GB RAM + 2GB swap |
+| Disk usage | 24 GB of 58 GB (42%) | Healthy headroom |
+| Swap concern | High swap = memory pressure | Rebuild swap if pressure returns |

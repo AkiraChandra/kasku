@@ -1,0 +1,55 @@
+{
+  "name": "WF4 - Digest Bulanan",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "dayOfMonth": 1, "h": 20, "m": 0, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf4-trigger",
+      "name": "Cron Tanggal 1 20:00",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "={{$env.API_BASE_URL}}/digest/monthly",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "x-api-key", "value": "={{$env.N8N_DIGEST_API_KEY}}" }] }
+      },
+      "id": "wf4-fetch",
+      "name": "Fetch Monthly Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "functionCode": "const d = $input.first().json;\nconst text = d.text || `📊 *Ringkasan Bulanan Kasku*\\n\\n📅 ${d.period?.label || ''}\\n\\n💰 Arus Kas\\nPemasukan : Rp${(d.income||0).toLocaleString('id-ID')}\\nPengeluaran: Rp${(d.expense||0).toLocaleString('id-ID')}\\nSisa      : Rp${(d.net||0).toLocaleString('id-ID')} (${d.savingsRate||0}% tabungan)\\n\\n📝 ${d.transactionCount||0} transaksi dicatat`;\nreturn [{ json: {\n  to: $env.OWNER_WA_NUMBER,\n  body: text\n} }];"
+      },
+      "id": "wf4-format",
+      "name": "Format Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf4-send-wa",
+      "name": "Kirim WA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Cron Tanggal 1 08:00": { "main": [[{ "node": "Fetch Monthly Digest" }]] },
+    "Fetch Monthly Digest": { "main": [[{ "node": "Format Message" }]] },
+    "Format Message": { "main": [[{ "node": "Kirim WA" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "digest" }]
+}

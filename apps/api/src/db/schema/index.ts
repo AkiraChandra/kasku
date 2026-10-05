@@ -1,27 +1,16 @@
-import {
-  pgTable,
-  pgEnum,
-  bigint,
-  timestamp,
-  text,
-  boolean,
-  integer,
-  uuid,
-  jsonb,
-  index,
-  uniqueIndex,
-} from 'drizzle-orm/pg-core'
+import { pgTable, pgEnum, bigint, timestamp, text, boolean, integer, uuid, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 export const userStatusEnum = pgEnum('user_status', ['active', 'suspended', 'deleted'])
 export const channelTypeEnum = pgEnum('channel_type', ['telegram', 'whatsapp', 'discord', 'slack', 'email', 'web'])
 export const transactionTypeEnum = pgEnum('transaction_type', ['income', 'expense', 'transfer', 'lend', 'collect', 'borrow', 'repay', 'adjustment'])
 export const transactionStatusEnum = pgEnum('transaction_status', ['pending', 'confirmed', 'rejected', 'recurring'])
 export const reminderTypeEnum = pgEnum('reminder_type', ['one_time', 'recurring'])
-export const debtTypeEnum = pgEnum('debt_type', ['lent', 'borrowed'])
-export const debtStatusEnum = pgEnum('debt_status', ['active', 'settled', 'written_off'])
+export const debtTypeEnum = pgEnum('debt_type', ['lent_out', 'borrowed'])
+export const debtStatusEnum = pgEnum('debt_status', ['active', 'settled', 'cancelled'])
 export const assetTypeEnum = pgEnum('asset_type', ['cash', 'bank_account', 'investment', 'crypto', 'property', 'vehicle', 'other'])
 export const billFrequencyEnum = pgEnum('bill_frequency', ['weekly', 'monthly', 'quarterly', 'yearly'])
-export const billStatusEnum = pgEnum('bill_status', ['pending', 'paid', 'skipped'])
+export const billStatusEnum = pgEnum('bill_status', ['upcoming', 'due', 'overdue', 'paid', 'skipped'])
 
 export const users = pgTable(
   'users',
@@ -173,7 +162,12 @@ export const transactions = pgTable(
     recurringId: uuid('recurring_id'),
     parentId: uuid('parent_id'),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
-    attachmentsCount: integer('attachments_count').default(0),
+    referenceNo: text('reference_no'),
+    source: text('source').notNull().default('web'),
+    ingestSourceId: uuid('ingest_source_id').references(() => ingestSources.id, { onDelete: 'set null' }),
+    corroboratedBy: jsonb('corroborated_by').default(sql`'[]'`),
+    rawInput: text('raw_input'),
+    sourceRef: text('source_ref'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
@@ -202,10 +196,12 @@ export const budgets = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     categoryId: uuid('category_id').references(() => categories.id, { onDelete: 'cascade' }),
+    name: text('name').notNull().default('Budget'),
     amount: bigint('amount', { mode: 'number' }).notNull(),
     period: text('period').notNull(), // weekly, monthly, quarterly, yearly
     startDate: timestamp('start_date', { withTimezone: true }).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (t) => [index('budgets_user_id_idx').on(t.userId)],
 )
@@ -229,16 +225,19 @@ export const bills = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    amount: bigint('amount', { mode: 'number' }).notNull(),
     categoryId: uuid('category_id').references(() => categories.id),
     accountId: uuid('account_id').references(() => accounts.id),
-    frequency: billFrequencyEnum('frequency').notNull(),
-    nextDueDate: timestamp('next_due_date', { withTimezone: true }).notNull(),
-    reminderDays: integer('reminder_days').array().default([1, 3]),
+    amountType: text('amount_type').default('fixed'), // fixed | variable
+    amount: bigint('amount', { mode: 'number' }).notNull(),
+    recurrence: text('recurrence').notNull().default('monthly'), // weekly | monthly | quarterly | yearly
+    dueDay: integer('due_day'), // 1-31
+    reminderDaysBefore: integer('reminder_days_before').array().default([3, 1, 0]),
     isActive: boolean('is_active').default(true),
+    notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
-  (t) => [index('bills_user_id_idx').on(t.userId), index('bills_next_due_date_idx').on(t.nextDueDate)],
+  (t) => [index('bills_user_id_idx').on(t.userId), index('bills_next_due_date_idx').on(t.updatedAt)],
 )
 
 export const billOccurrences = pgTable(
@@ -247,10 +246,11 @@ export const billOccurrences = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     billId: uuid('bill_id').notNull().references(() => bills.id, { onDelete: 'cascade' }),
-    transactionId: uuid('transaction_id').references(() => transactions.id),
     dueDate: timestamp('due_date', { withTimezone: true }).notNull(),
+    expectedAmount: bigint('expected_amount', { mode: 'number' }).notNull(),
+    status: billStatusEnum('status').default('upcoming'),
+    transactionId: uuid('transaction_id').references(() => transactions.id),
     paidDate: timestamp('paid_date', { withTimezone: true }),
-    status: billStatusEnum('status').default('pending'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (t) => [index('bill_occurrences_user_id_idx').on(t.userId), index('bill_occurrences_bill_id_idx').on(t.billId), index('bill_occurrences_due_date_idx').on(t.dueDate)],
@@ -294,11 +294,12 @@ export const debts = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     contactId: uuid('contact_id').references(() => contacts.id, { onDelete: 'set null' }),
+    personName: text('person_name').notNull().default(''),
     type: debtTypeEnum('type').notNull(),
-    originalAmount: bigint('original_amount', { mode: 'number' }).notNull(),
+    amount: bigint('amount', { mode: 'number' }).notNull(),
     remainingAmount: bigint('remaining_amount', { mode: 'number' }).notNull(),
     currency: text('currency').default('IDR'),
-    note: text('note'),
+    description: text('description'),
     dueDate: timestamp('due_date', { withTimezone: true }),
     status: debtStatusEnum('status').default('active'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -326,13 +327,13 @@ export const assets = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(), // gold | stock | mutual_fund | crypto | deposit | property | vehicle | other
     name: text('name').notNull(),
-    type: assetTypeEnum('type').notNull(),
-    currentValue: bigint('current_value', { mode: 'number' }).notNull(),
-    currency: text('currency').default('IDR'),
-    purchasePrice: bigint('purchase_price', { mode: 'number' }),
-    purchaseDate: timestamp('purchase_date', { withTimezone: true }),
-    location: text('location'),
+    unit: text('unit'),
+    quantity: bigint('quantity', { mode: 'number' }).default(1),
+    costBasis: bigint('cost_basis', { mode: 'number' }).default(0),
+    isLiquid: boolean('is_liquid').default(false),
+    isArchived: boolean('is_archived').default(false),
     notes: text('notes'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
@@ -346,11 +347,13 @@ export const assetValuations = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     assetId: uuid('asset_id').notNull().references(() => assets.id, { onDelete: 'cascade' }),
-    value: bigint('value', { mode: 'number' }).notNull(),
-    notedAt: timestamp('noted_at', { withTimezone: true }).defaultNow(),
+    valuedAt: timestamp('valued_at', { withTimezone: true }).notNull().defaultNow(),
+    unitPrice: bigint('unit_price', { mode: 'number' }),
+    totalValue: bigint('total_value', { mode: 'number' }).notNull(),
+    source: text('source').default('manual'), // manual | auto
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
-  (t) => [index('asset_valuations_user_id_idx').on(t.userId), index('asset_valuations_asset_id_idx').on(t.assetId), index('asset_valuations_noted_at_idx').on(t.notedAt)],
+  (t) => [index('asset_valuations_user_id_idx').on(t.userId), index('asset_valuations_asset_id_idx').on(t.assetId), index('asset_valuations_valued_at_idx').on(t.valuedAt)],
 )
 
 export const networthSnapshots = pgTable(
@@ -358,13 +361,15 @@ export const networthSnapshots = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    totalAssets: bigint('total_assets', { mode: 'number' }).notNull(),
-    totalDebts: bigint('total_debts', { mode: 'number' }).notNull(),
-    networth: bigint('networth', { mode: 'number' }).notNull(),
-    currency: text('currency').default('IDR'),
-    snapshotAt: timestamp('snapshot_at', { withTimezone: true }).defaultNow(),
+    snapshotDate: timestamp('snapshot_date', { withTimezone: true }).notNull().defaultNow(),
+    assetsTotal: bigint('assets_total', { mode: 'number' }).notNull().default(0),
+    liabilitiesTotal: bigint('liabilities_total', { mode: 'number' }).notNull().default(0),
+    receivablesTotal: bigint('receivables_total', { mode: 'number' }).notNull().default(0),
+    netWorth: bigint('net_worth', { mode: 'number' }).notNull(),
+    breakdownJson: jsonb('breakdown_json').default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
-  (t) => [index('networth_snapshots_user_id_idx').on(t.userId), index('networth_snapshots_snapshot_at_idx').on(t.snapshotAt)],
+  (t) => [index('networth_snapshots_user_id_idx').on(t.userId), index('networth_snapshots_snapshot_at_idx').on(t.snapshotDate)],
 )
 
 export const auditLog = pgTable(
@@ -381,6 +386,29 @@ export const auditLog = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
   (t) => [index('audit_log_user_id_idx').on(t.userId), index('audit_log_created_at_idx').on(t.createdAt)],
+)
+
+// M2b: ingest sources for multi-channel transaction ingestion
+export const ingestSources = pgTable(
+  'ingest_sources',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    kind: text('kind').notNull(), // email, webhook, notification, csv, form, autopay
+    apiKeyId: uuid('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    trust: text('trust').notNull().default('review'), // review | auto
+    parserName: text('parser_name'),
+    totalOk: bigint('total_ok', { mode: 'number' }).notNull().default(0),
+    totalCorrected: bigint('total_corrected', { mode: 'number' }).notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    index('ingest_sources_user_id_idx').on(t.userId),
+    index('ingest_sources_kind_idx').on(t.kind),
+  ],
 )
 
 // Drizzle config for migrations

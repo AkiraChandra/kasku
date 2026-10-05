@@ -1,0 +1,55 @@
+{
+  "name": "WF10 - Nudge Harian",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "h": 21, "m": 0, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf10-trigger",
+      "name": "Cron 21:00 Harian",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "={{$env.API_BASE_URL}}/transactions?from={{$vars.today}}&to={{$vars.today}}&limit=1",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "x-api-key", "value": "={{$env.N8N_DIGEST_API_KEY}}" }] }
+      },
+      "id": "wf10-check",
+      "name": "Check Today Transactions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "functionCode": "const data = $input.first().json;\n// data should be { transactions: [] } or equivalent\nconst hasTx = data?.data?.length > 0 || data?.transactions?.length > 0;\nif (hasTx) return [{ json: { skip: true } }];\nreturn [{ json: {\n  to: $env.OWNER_WA_NUMBER,\n  body: `📝 *Nudge Harian*\\n\\nHari ini belum ada transaksi yang dicatat.\\n\\nAda yang lupa? Buka Kasku dan catat pengeluaran atau pemasukan hari ini.\\n\\nMencatat lewat WA juga bisa — tinggal ketik \"makan siang 35rb\".`\n} }];"
+      },
+      "id": "wf10-decide",
+      "name": "Decide to Nudge",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf10-send",
+      "name": "Kirim WA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Cron 21:00 Harian": { "main": [[{ "node": "Check Today Transactions" }]] },
+    "Check Today Transactions": { "main": [[{ "node": "Decide to Nudge" }]] },
+    "Decide to Nudge": { "main": [[{ "node": "Kirim WA" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "nudge" }]
+}

@@ -1,0 +1,54 @@
+{
+  "name": "WF9 - Health Check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "h": "*/5", "m": 0, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf9-trigger",
+      "name": "Cron Every 5 Minutes",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "={{$env.API_BASE_URL}}/health",
+        "method": "GET",
+        "timeout": 10000
+      },
+      "id": "wf9-health",
+      "name": "Check API Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "functionCode": "const res = $input.first().json;\nif (res.ok !== true || res.db !== 'ok') {\n  return [{ json: {\n    to: $env.OWNER_WA_NUMBER,\n    body: `🚨 *Health Check Gagal*\\n\\nService: ${res.service || 'kasku-api'}\\nDB: ${res.db || 'error'}\\n\\nSegera cek server.`\n  } }];\n}\nreturn [{ json: { ok: true } }];"
+      },
+      "id": "wf9-eval",
+      "name": "Evaluate Status",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf9-alert",
+      "name": "Alert on Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Cron Every 5 Minutes": { "main": [[{ "node": "Check API Health" }]] },
+    "Check API Health": { "main": [[{ "node": "Evaluate Status" }]] },
+    "Evaluate Status": { "main": [[{ "node": "Alert on Failure" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "health" }]
+}

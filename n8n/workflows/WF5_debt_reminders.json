@@ -1,0 +1,55 @@
+{
+  "name": "WF5 - Reminder Piutang dan Hutang",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "h": 9, "m": 0, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf5-trigger",
+      "name": "Cron 09:00 Harian",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "={{$env.API_BASE_URL}}/internal/reminders/due?kind=debt",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "x-api-key", "value": "={{$env.N8N_JOBS_API_KEY}}" }] }
+      },
+      "id": "wf5-fetch",
+      "name": "Fetch Debt Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "functionCode": "const reminders = $input.all();\nconst messages = reminders.map(r => {\n  const d = r.json;\n  const direction = d.type === 'lent_out' ? 'Piutang' : 'Hutang';\n  return {\n    json: {\n      to: $env.OWNER_WA_NUMBER,\n      body: `💳 *Pengingat ${direction}*\\n\\n${d.personName || 'Kontak'} — Rp${(d.amount||0).toLocaleString('id-ID')}\\nJatuh tempo: ${d.dueDate ? new Date(d.dueDate).toLocaleDateString('id-ID') : 'tidak ditentukan'}\\n\\n${direction === 'Piutang' ? 'Tagih sekarang?' : 'Cicilan/bayar sekarang?'}`\n    }\n  };\n});\nreturn messages.length ? messages : [{ json: { to: $env.OWNER_WA_NUMBER, body: 'Tidak ada pengingat piutang/hutang hari ini.' } }];"
+      },
+      "id": "wf5-format",
+      "name": "Format Messages",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf5-send-wa",
+      "name": "Kirim WA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Cron 09:00 Harian": { "main": [[{ "node": "Fetch Debt Reminders" }]] },
+    "Fetch Debt Reminders": { "main": [[{ "node": "Format Messages" }]] },
+    "Format Messages": { "main": [[{ "node": "Kirim WA" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "debt" }]
+}

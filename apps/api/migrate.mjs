@@ -8,6 +8,13 @@ const migrationFiles = [
   '0001_solid_warhawk.sql',
   '0002_auth.sql',
   '0003_m1_finance.sql',
+  '0004_m2_budget.sql',
+  '0005_m4_hutang.sql',
+  '0006_m3_dashboard.sql',
+  '0007_m4_hutang_normalize.sql',
+  '0008_m5_bills.sql',
+  '0010_m8_misc.sql',
+  '0011_m8_assets_fix.sql',
 ]
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 })

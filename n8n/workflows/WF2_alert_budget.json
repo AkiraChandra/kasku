@@ -1,0 +1,56 @@
+{
+  "name": "WF2 - Alert Budget Threshold",
+  "nodes": [
+    {
+      "parameters": {
+        "http": {
+          "path": "budget-threshold-crossed",
+          "拓展": false,
+          "rawBody": false
+        }
+      },
+      "id": "wf2-webhook",
+      "name": "Budget Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "functionCode": "// Verify HMAC signature\nconst crypto = require('crypto');\nconst body = $input.first().json;\nconst sig = $('Budget Webhook').first().binary?.data || $('Budget Webhook').first().headers['x-hmac-signature'];\nconst ts = $('Budget Webhook').first().headers['x-hmac-timestamp'];\n\nif (!sig || !ts) throw new Error('Missing HMAC signature');\nconst expected = crypto.createHmac('sha256', process.env.EVENT_HMAC_SECRET)\n  .update(ts + '.' + JSON.stringify(body)).digest('hex');\nif (sig !== expected) throw new Error('HMAC verification failed');\n\nreturn [{ json: body }];"
+      },
+      "id": "wf2-verify",
+      "name": "Verify HMAC",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "functionCode": "const d = $input.first().json;\nconst pct = d.percentage || 0;\nconst emoji = pct >= 100 ? '🔴' : pct >= 80 ? '🟡' : '🟢';\nreturn [{ json: {\n  to: $env.OWNER_WA_NUMBER,\n  body: `${emoji} *Budget Alert*\\n\\nBudget *${d.budgetName}* sudah ${pct}% terpakai.\\nSisa: Rp${(d.remaining || 0).toLocaleString('id-ID')}\\n\\nBalas \"ok\" untuk konfirmasi.`\n} }];"
+      },
+      "id": "wf2-format",
+      "name": "Format Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf2-send-wa",
+      "name": "Kirim WA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Budget Webhook": { "main": [[{ "node": "Verify HMAC" }]] },
+    "Verify HMAC": { "main": [[{ "node": "Format Message" }]] },
+    "Format Message": { "main": [[{ "node": "Kirim WA" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "budget" }]
+}

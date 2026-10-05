@@ -1,0 +1,32 @@
+{
+  "name": "WF6 - Snapshot Net Worth Harian",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "h": 23, "m": 55, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf6-trigger",
+      "name": "Cron 23:55 Harian",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "={{$env.API_BASE_URL}}/internal/jobs/snapshot-networth",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "x-api-key", "value": "={{$env.N8N_JOBS_API_KEY}}" }] }
+      },
+      "id": "wf6-snapshot",
+      "name": "Snapshot Net Worth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4
+    }
+  ],
+  "connections": {
+    "Cron 23:55 Harian": { "main": [[{ "node": "Snapshot Net Worth" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "networth" }]
+}

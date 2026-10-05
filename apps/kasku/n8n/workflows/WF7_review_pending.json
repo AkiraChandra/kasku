@@ -1,0 +1,79 @@
+{
+  "name": "WF7 - Review Transaksi Pending",
+  "nodes": [
+    {
+      "parameters": {
+        "http": {
+          "path": "pending-review",
+          "拓展": false,
+          "rawBody": false
+        }
+      },
+      "id": "wf7a-webhook",
+      "name": "Webhook Pending Review",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "h": 20, "m": 0, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf7b-cron",
+      "name": "Cron 20:00 Harian",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "={{$env.API_BASE_URL}}/transactions/inbox?status=pending_review",
+        "method": "GET",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "x-api-key", "value": "={{$env.N8N_DIGEST_API_KEY}}" }] }
+      },
+      "id": "wf7-fetch",
+      "name": "Fetch Pending Transactions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4
+    },
+    {
+      "parameters": {
+        "functionCode": "const items = $input.all();\nif (!items.length) return [{ json: { skip: true } }];\nconst count = items.length;\nreturn [{ json: {\n  to: $env.OWNER_WA_NUMBER,\n  body: `🔔 *Ada ${count} transaksi perlu dicek*\\n\\nBuka aplikasi Kasku > Inbox Review untuk mengkonfirmasi atau memperbaiki transaksi berikut.\\n\\nJangan abaikan — transaksi tersebut menunggu di Inbox Review.`\n} }];"
+      },
+      "id": "wf7-format",
+      "name": "Format Alert",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf7-send-wa",
+      "name": "Kirim WA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "const items = $input.all();\nreturn items.filter(i => !i.json.skip);"
+      },
+      "id": "wf7-filter",
+      "name": "Filter Skip",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    }
+  ],
+  "connections": {
+    "Webhook Pending Review": { "main": [[{ "node": "Fetch Pending Transactions" }]] },
+    "Cron 20:00 Harian": { "main": [[{ "node": "Fetch Pending Transactions" }]] },
+    "Fetch Pending Transactions": { "main": [[{ "node": "Filter Skip" }]] },
+    "Filter Skip": { "main": [[{ "node": "Format Alert" }]] },
+    "Format Alert": { "main": [[{ "node": "Kirim WA" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "review" }]
+}

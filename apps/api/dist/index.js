@@ -6,6 +6,14 @@ import { createAuthRoutes } from './lib/auth-routes.js';
 import { createDatabaseAuthRepository } from './lib/auth-db-repo.js';
 import { createDatabaseFinanceRepository } from './lib/finance-repo.js';
 import { createFinanceRoutes } from './lib/finance-routes.js';
+import { createBillsRoutes } from './lib/bills-routes.js';
+import { createDatabaseBillsRepository } from './lib/bills-repo.js';
+import { createAssetsRoutes } from './lib/assets-routes.js';
+import { createDatabaseAssetsRepository } from './lib/assets-repo.js';
+import { createReportsRoutes } from './lib/reports-routes.js';
+import { createDigestRoutes } from './lib/digest-routes.js';
+import { createIngestRoutes } from './lib/ingest-routes.js';
+import { createTotpRoutes } from './lib/totp-routes.js';
 export const success = (data, summary_text) => ({
     ok: true,
     data,
@@ -122,6 +130,127 @@ const openApiDocument = {
         '/api/v1/transactions/{id}': {
             delete: { summary: 'Hapus transaksi secara lunak', responses: { '200': { description: 'Transaksi dihapus' }, '404': { description: 'Transaksi tidak ditemukan' } } },
         },
+        '/api/v1/budgets': {
+            get: { summary: 'Daftar budget dengan progres', responses: { '200': { description: 'Daftar budget' }, '401': { description: 'Tidak terautentikasi' } } },
+            post: { summary: 'Buat budget', responses: { '201': { description: 'Budget dibuat' }, '400': { description: 'Input tidak valid' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/budgets/{id}': {
+            patch: { summary: 'Perbarui budget', responses: { '200': { description: 'Budget diperbarui' }, '400': { description: 'Input tidak valid' }, '404': { description: 'Budget tidak ditemukan' } } },
+            delete: { summary: 'Hapus budget', responses: { '200': { description: 'Budget dihapus' }, '404': { description: 'Budget tidak ditemukan' } } },
+        },
+        '/api/v1/budgets/{id}/progress': {
+            get: { summary: 'Progres budget periode berjalan', responses: { '200': { description: 'Progres budget' }, '404': { description: 'Budget tidak ditemukan' } } },
+        },
+        '/api/v1/debts': {
+            get: { summary: 'Daftar hutang/piutang', parameters: [{ name: 'type', in: 'query', schema: { type: 'string', enum: ['lent_out', 'borrowed'] } }], responses: { '200': { description: 'Daftar hutang' }, '401': { description: 'Tidak terautentikasi' } } },
+            post: { summary: 'Buat hutang/piutang', parameters: [{ name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' } }], responses: { '201': { description: 'Hutang dibuat' }, '400': { description: 'Input tidak valid' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/debts/{id}': {
+            get: { summary: 'Detail hutang', responses: { '200': { description: 'Hutang ditemukan' }, '404': { description: 'Hutang tidak ditemukan' } } },
+            patch: { summary: 'Perbarui hutang', responses: { '200': { description: 'Hutang diperbarui' }, '400': { description: 'Input tidak valid' }, '404': { description: 'Hutang tidak ditemukan' } } },
+            delete: { summary: 'Hapus hutang', responses: { '200': { description: 'Hutang dihapus' }, '404': { description: 'Hutang tidak ditemukan' } } },
+        },
+        '/api/v1/debts/{id}/payments': {
+            post: { summary: 'Catat pembayaran parsial', parameters: [{ name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' } }], responses: { '201': { description: 'Pembayaran dicatat' }, '400': { description: 'Input tidak valid' }, '404': { description: 'Hutang tidak ditemukan' } } },
+        },
+        '/api/v1/debts/{id}/settle': {
+            post: { summary: 'Tandai hutang lunas', responses: { '200': { description: 'Hutang dilunasi' }, '404': { description: 'Hutang tidak ditemukan' } } },
+        },
+        '/api/v1/dashboard/summary': {
+            get: { summary: 'Ringkasan dashboard', responses: { '200': { description: 'Ringkasan saldo, pemasukan, pengeluaran, rasio tabungan' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/dashboard/cashflow': {
+            get: { summary: 'Arus kas harian/mingguan', parameters: [{ name: 'period', in: 'query', required: false, schema: { type: 'string', enum: ['daily', 'weekly'] } }], responses: { '200': { description: 'Arus kas dengan breakdown' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/dashboard/categories': {
+            get: { summary: 'Pengeluaran per kategori bulan ini', responses: { '200': { description: 'Pengelompokan pengeluaran' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/dashboard/trends': {
+            get: { summary: 'Tren bulanan perbandingan antar bulan', responses: { '200': { description: 'Data tren 6 bulan' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/bills': {
+            get: { summary: 'Daftar tagihan', responses: { '200': { description: 'Daftar tagihan aktif' }, '401': { description: 'Tidak terautentikasi' } } },
+            post: { summary: 'Buat tagihan', responses: { '201': { description: 'Tagihan dibuat' }, '400': { description: 'Input tidak valid' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/bills/upcoming': {
+            get: { summary: 'Tagihan mendatang', parameters: [{ name: 'days', in: 'query', required: false, schema: { type: 'integer', default: 30 } }], responses: { '200': { description: 'Daftar occurrence' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/bills/{id}': {
+            get: { summary: 'Detail tagihan', responses: { '200': { description: 'Tagihan ditemukan' }, '404': { description: 'Tidak ditemukan' } } },
+            patch: { summary: 'Update tagihan', responses: { '200': { description: 'Tagihan diperbarui' }, '400': { description: 'Input tidak valid' }, '404': { description: 'Tidak ditemukan' } } },
+            delete: { summary: 'Hapus (arsipkan) tagihan', responses: { '200': { description: 'Tagihan diarsipkan' }, '404': { description: 'Tidak ditemukan' } } },
+        },
+        '/api/v1/bills/{id}/occurrences': {
+            get: { summary: 'Riwayat occurrence tagihan', responses: { '200': { description: 'Occurrence list' }, '404': { description: 'Tagihan tidak ditemukan' } } },
+            post: { summary: 'Generate occurrences', responses: { '200': { description: 'Occurrences dihasilkan' }, '404': { description: 'Tagihan tidak ditemukan' } } },
+        },
+        '/api/v1/bills/{id}/occurrences/{oid}/pay': {
+            post: { summary: 'Tandai occurrence lunas', responses: { '200': { description: 'Occurrence ditandai lunas' }, '404': { description: 'Occurrence tidak ditemukan' } } },
+        },
+        '/api/v1/bills/{id}/occurrences/{oid}/skip': {
+            post: { summary: 'Lewatkan occurrence', responses: { '200': { description: 'Occurrence dilewati' }, '404': { description: 'Occurrence tidak ditemukan' } } },
+        },
+        '/api/v1/assets': {
+            get: { summary: 'Daftar aset', responses: { '200': { description: 'Daftar aset' }, '401': { description: 'Tidak terautentikasi' } } },
+            post: { summary: 'Buat aset', responses: { '201': { description: 'Aset dibuat' }, '400': { description: 'Input tidak valid' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/assets/{id}': {
+            get: { summary: 'Detail aset', responses: { '200': { description: 'Aset ditemukan' }, '404': { description: 'Tidak ditemukan' } } },
+            patch: { summary: 'Update aset', responses: { '200': { description: 'Aset diperbarui' }, '404': { description: 'Tidak ditemukan' } } },
+            delete: { summary: 'Arsipkan aset', responses: { '200': { description: 'Aset diarsipkan' }, '404': { description: 'Tidak ditemukan' } } },
+        },
+        '/api/v1/assets/{id}/valuations': {
+            get: { summary: 'Riwayat valuasi aset', responses: { '200': { description: 'Riwayat valuasi' } } },
+            post: { summary: 'Tambah valuasi aset', responses: { '201': { description: 'Valuasi tercatat' }, '400': { description: 'Input tidak valid' } } },
+        },
+        '/api/v1/networth': {
+            get: { summary: 'Riwayat snapshot net worth', parameters: [{ name: 'limit', in: 'query', required: false, schema: { type: 'integer', default: 30 } }], responses: { '200': { description: 'Daftar snapshot' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/networth/breakdown': {
+            get: { summary: 'Rincian kekayaan bersih', responses: { '200': { description: 'Breakdown net worth' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/networth/snapshot': {
+            post: { summary: 'Ambil snapshot net worth', responses: { '200': { description: 'Snapshot disimpan' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/reports/summary': {
+            get: { summary: 'Ringkasan laporan', parameters: [{ name: 'period', in: 'query', schema: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly', 'yearly'], default: 'monthly' } }], responses: { '200': { description: 'Ringkasan laporan' }, '401': { description: 'Tidak terautentikasi' }, '429': { description: 'Rate limit exceeded' } } },
+        },
+        '/api/v1/reports/category-breakdown': {
+            get: { summary: 'Breakdown kategori per periode', parameters: [{ name: 'period', in: 'query', schema: { type: 'string', default: 'monthly' } }], responses: { '200': { description: 'Breakdown kategori' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/reports/cashflow': {
+            get: { summary: 'Arus kas per periode', parameters: [{ name: 'period', in: 'query', schema: { type: 'string', default: 'monthly' } }], responses: { '200': { description: 'Arus kas' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/reports/export': {
+            get: { summary: 'Export CSV streaming', parameters: [{ name: 'format', in: 'query', schema: { type: 'string', enum: ['csv'] } }, { name: 'from', in: 'query', schema: { type: 'string' } }, { name: 'to', in: 'query', schema: { type: 'string' } }], responses: { '200': { description: 'CSV stream' }, '400': { description: 'Parameter tidak valid' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/digest/weekly': {
+            get: { summary: 'Digest mingguan', responses: { '200': { description: 'Digest mingguan dengan teks WhatsApp' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/digest/monthly': {
+            get: { summary: 'Digest bulanan', responses: { '200': { description: 'Digest bulanan dengan teks WhatsApp' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/ingest/transactions': {
+            post: { summary: 'Ingest transaksi (n8n)', parameters: [{ name: 'X-Api-Key', in: 'header', required: true, schema: { type: 'string' } }], responses: { '201': { description: 'Transaksi di-ingest' }, '400': { description: 'Validasi gagal' }, '401': { description: 'Tidak terautentikasi' }, '429': { description: 'Rate limit exceeded' } } },
+        },
+        '/api/v1/ingest/batch': {
+            post: { summary: 'Ingest batch transaksi (max 200)', parameters: [{ name: 'X-Api-Key', in: 'header', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'Batch hasil' }, '400': { description: 'Validasi gagal' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/ingest/sources': {
+            get: { summary: 'Daftar sumber input', responses: { '200': { description: 'Daftar sumber' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/auth/2fa/setup': {
+            post: { summary: 'Setup 2FA TOTP', responses: { '200': { description: 'Secret dan QR dihasilkan' }, '401': { description: 'Tidak terautentikasi' } } },
+        },
+        '/api/v1/auth/2fa/verify': {
+            post: { summary: 'Verifikasi dan aktifkan 2FA', responses: { '200': { description: '2FA diaktifkan' }, '400': { description: 'Kode tidak valid' } } },
+        },
+        '/api/v1/auth/2fa/disable': {
+            post: { summary: 'Nonaktifkan 2FA', responses: { '200': { description: '2FA dinonaktifkan' }, '400': { description: 'Kode tidak valid' } } },
+        },
+        '/api/v1/auth/2fa/status': {
+            get: { summary: 'Status 2FA', responses: { '200': { description: 'Status 2FA' } } },
+        },
     },
 };
 async function defaultDatabaseCheck() {
@@ -142,15 +271,29 @@ async function defaultDatabaseCheck() {
 export function createApp(dependencies = {}) {
     const app = new Hono();
     const checkDatabase = dependencies.checkDatabase ?? defaultDatabaseCheck;
-    const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : undefined;
+    const pool = dependencies.pool ?? (process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : undefined);
     const authRepo = dependencies.authRepo ?? (pool ? createDatabaseAuthRepository(pool) : undefined);
     const financeRepo = dependencies.financeRepo ?? (pool ? createDatabaseFinanceRepository(pool) : undefined);
+    const billsRepo = dependencies.billsRepo ?? (pool ? createDatabaseBillsRepository(pool) : undefined);
+    const assetsRepo = dependencies.assetsRepo ?? (pool ? createDatabaseAssetsRepository(pool) : undefined);
     if (authRepo) {
         const secure = (process.env.APP_URL ?? '').startsWith('https');
         app.route('/api/v1/auth', createAuthRoutes(authRepo, secure));
+        app.route('/api/v1/auth/2fa', createTotpRoutes('kasku_session', undefined, authRepo, pool));
     }
     if (financeRepo)
         app.route('/api/v1', createFinanceRoutes(financeRepo, authRepo));
+    if (billsRepo)
+        app.route('/api/v1', createBillsRoutes(billsRepo, authRepo));
+    if (assetsRepo)
+        app.route('/api/v1', createAssetsRoutes(assetsRepo, authRepo));
+    // M8 Reports & Digest
+    if (pool) {
+        app.route('/api/v1/reports', createReportsRoutes(pool, authRepo));
+        app.route('/api/v1/digest', createDigestRoutes(pool, authRepo));
+        // M2b Ingest (needs pool for Drizzle)
+        app.route('/api/v1/ingest', createIngestRoutes(pool, authRepo));
+    }
     app.get('/health', async (c) => {
         const db = await checkDatabase();
         return c.json({ ok: true, service: 'kasku-api', db });

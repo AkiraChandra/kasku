@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "recipe": {
+    "name": "docker-compose project",
+    "kind": "compose",
+    "bootstrap": [],
+    "build": [
+      "docker compose build"
+    ],
+    "test": [
+      "bash -c \"cd apps/api && npm test && npm run typecheck && npm run build\"",
+      "bash -c \"cd apps/web && npm test && npm run build\""
+    ],
+    "start": "docker compose up",
+    "port": null,
+    "readinessPath": "/",
+    "evidence": [
+      "Detected docker-compose.yml"
+    ]
+  },
+  "updatedAt": "2026-10-04T11:35:58.405688+00:00"
+}

@@ -51,4 +51,153 @@ describe('finance views', () => {
     expect(screen.getByText('-Rp 35.000')).toBeTruthy()
     vi.unstubAllGlobals()
   })
+
+  it('shows budget list from the API', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: [] }),
+    }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Budget' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Budget' })).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows budget cards with progress', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: [{
+          budget: { id: 'b1', name: 'Budget Makan', categoryId: null, amount: 1_000_000, period: 'monthly', startDate: '2026-10-01T00:00:00Z', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z', userId: 'u1' },
+          spent: 250_000,
+          remaining: 750_000,
+          percentage: 25,
+          periodStart: '2026-10-01T00:00:00Z',
+          periodEnd: '2026-11-01T00:00:00Z',
+        }],
+      }),
+    }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Budget' }))
+    expect(await screen.findByText('Budget Makan')).toBeTruthy()
+    expect(screen.getByText('Rp 250.000')).toBeTruthy()
+    expect(screen.getByText(/Rp 1\.000\.000/)).toBeTruthy()
+    expect(screen.getByText(/25%/)).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows empty state when no budgets', async () => {
+    let callCount = 0
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      callCount++
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, data: [] }),
+      })
+    }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Budget' }))
+    expect(await screen.findByText('Belum ada budget')).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows dashboard summary cards', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/dashboard/summary')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { totalBalance: 1500000, incomeThisMonth: 500000, expenseThisMonth: 200000, savingsRate: 60 } }) })
+      }
+      if (path.includes('/dashboard/cashflow')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { period: 'daily', income: 500000, expense: 200000, net: 300000, breakdown: [] } }) })
+      }
+      if (path.includes('/dashboard/categories')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { expenses: [], total: 0 } }) })
+      }
+      if (path.includes('/dashboard/trends')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { months: [], comparison: { incomeChange: 0, expenseChange: 0, netChange: 0 }, currentMonth: '2026-10' } }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
+    }))
+    render(<App />)
+    expect(await screen.findByText('Dashboard')).toBeTruthy()
+    expect(await screen.findByText('Saldo Total')).toBeTruthy()
+    expect(await screen.findByText('Pemasukan Bulan Ini')).toBeTruthy()
+    expect(await screen.findByText('Pengeluaran Bulan Ini')).toBeTruthy()
+    expect(await screen.findByText('Rasio Tabungan')).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows category donut and legend when expenses exist', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/dashboard/summary')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { totalBalance: 1000000, incomeThisMonth: 1000000, expenseThisMonth: 300000, savingsRate: 70 } }) })
+      }
+      if (path.includes('/dashboard/cashflow')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { period: 'daily', income: 1000000, expense: 300000, net: 700000, breakdown: [] } }) })
+      }
+      if (path.includes('/dashboard/categories')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { expenses: [{ id: 'c1', name: 'Makanan', amount: 200000, percentage: 67 }, { id: 'c2', name: 'Transport', amount: 100000, percentage: 33 }], total: 300000 } }) })
+      }
+      if (path.includes('/dashboard/trends')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { months: [], comparison: { incomeChange: 0, expenseChange: 0, netChange: 0 }, currentMonth: '2026-10' } }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
+    }))
+    render(<App />)
+    expect(await screen.findByText('Makanan')).toBeTruthy()
+    expect(screen.getByText('Transport')).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows trend monthly bars', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/dashboard/summary')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { totalBalance: 2000000, incomeThisMonth: 800000, expenseThisMonth: 400000, savingsRate: 50 } }) })
+      }
+      if (path.includes('/dashboard/cashflow')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { period: 'daily', income: 800000, expense: 400000, net: 400000, breakdown: [] } }) })
+      }
+      if (path.includes('/dashboard/categories')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { expenses: [], total: 0 } }) })
+      }
+      if (path.includes('/dashboard/trends')) {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { months: [{ month: '2026-05', income: 500000, expense: 200000, net: 300000 }, { month: '2026-10', income: 800000, expense: 400000, net: 400000 }], comparison: { incomeChange: 300000, expenseChange: 200000, netChange: 100000 }, currentMonth: '2026-10' } }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
+    }))
+    render(<App />)
+    expect(await screen.findByText('2026-05')).toBeTruthy()
+    expect(screen.getByText('2026-10')).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows Hutang tabs and empty state', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, data: [] }) }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Hutang' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Hutang' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Hutang saya/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Utang saya/ })).toBeTruthy()
+    expect(screen.getByText('Belum ada hutang')).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('renders debt person, remaining amount, due date, and payment action', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: [{
+        id: 'd1', userId: 'u1', contactId: null, personName: 'Budi', type: 'lent_out',
+        amount: 1000000, remainingAmount: 250000, currency: 'IDR', description: 'Pinjaman',
+        dueDate: '2099-12-31T00:00:00.000Z', status: 'active', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
+      }] }),
+    }))
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Hutang' }))
+    expect(await screen.findByText('Budi')).toBeTruthy()
+    expect(screen.getAllByText('Rp 250.000').length).toBeGreaterThan(0)
+    expect(screen.getByText('Pinjaman')).toBeTruthy()
+    expect(screen.getByText(/Jatuh tempo/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Bayar' })).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
 })

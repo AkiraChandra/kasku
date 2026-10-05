@@ -1,0 +1,57 @@
+{
+  "name": "WF8 - Backup Terenkripsi",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cron", "h": 2, "m": 30, "timezone": "Asia/Jakarta" }] }
+      },
+      "id": "wf8-trigger",
+      "name": "Cron 02:30 Harian",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "command": "bash",
+        "parameters": {
+          "command": "cd /opt/kasku && ./scripts/backup.sh 2>&1"
+        },
+        "executeOnce": false
+      },
+      "id": "wf8-run-backup",
+      "name": "Run Backup Script",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "const output = $input.first().json.stdout || '';\nconst hasError = output.includes('ERROR');\nif (hasError) {\n  return [{ json: {\n    to: $env.OWNER_WA_NUMBER,\n    body: `⚠️ *Backup Gagal*\\n\\nBackup database Kasku gagal dijalankan. Cek log server segera.\\n\\nPesan: ${output.slice(0, 200)}`\n  } }];\n}\nreturn [{ json: { ok: true, log: output.slice(0, 500) } }];"
+      },
+      "id": "wf8-check",
+      "name": "Check Result",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "url": "={{$env.HERMES_WEBHOOK_URL}}/send",
+        "method": "POST",
+        "bodyParameters": { "parameters": [{ "name": "message", "value": "={{$json.body}}" }, { "name": "to", "value": "={{$json.to}}" }] }
+      },
+      "id": "wf8-alert",
+      "name": "Alert on Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Cron 02:30 Harian": { "main": [[{ "node": "Run Backup Script" }]] },
+    "Run Backup Script": { "main": [[{ "node": "Check Result" }]] },
+    "Check Result": { "main": [[{ "node": "Alert on Failure" }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "backup" }]
+}
