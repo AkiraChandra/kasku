@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
+import LoginPage from './LoginPage.js'
 import TotpPage from './TotpPage.js'
+import CSVImportPage from './CSVImportPage.js'
+import InboxReviewPage from './InboxReviewPage.js'
+import SourcesPage from './SourcesPage.js'
 
 export type NavItem = 'beranda' | 'transaksi' | 'budget' | 'hutang' | 'lainnya'
 type Account = { id: string; name: string; type: string; balance: number }
-type Transaction = { id: string; type: 'income' | 'expense' | 'transfer'; amount: number; note: string | null; date: string }
+type Transaction = { id: string; type: 'income' | 'expense' | 'transfer'; amount: number; note: string | null; date: string; source?: string | null }
 
 type DebtRow = {
   id: string; userId: string; contactId: string | null; personName: string | null;
@@ -52,14 +56,39 @@ type BudgetProgress = {
 }
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [active, setActive] = useState<NavItem>('beranda')
-  const [subview, setSubview] = useState<'akun' | 'kategori' | '2fa'>('akun')
+  const [subview, setSubview] = useState<'akun' | 'kategori' | '2fa' | 'csv-import' | 'inbox-review' | 'sources'>('akun')
+
+  useEffect(() => {
+    let mounted = true
+    fetch('/api/v1/auth/me', { credentials: 'include' })
+      .then((response) => {
+        if (mounted) setIsAuthenticated(response.status === 200)
+      })
+      .catch(() => {
+        if (mounted) setIsAuthenticated(false)
+      })
+    return () => { mounted = false }
+  }, [])
+
+  async function handleLogout() {
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include' })
+    } finally {
+      setIsAuthenticated(false)
+    }
+  }
+
+  if (isAuthenticated === null) return <p className="muted">Memuat...</p>
+  if (!isAuthenticated) return <LoginPage onLogin={() => setIsAuthenticated(true)} />
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="topbar-title">Kasku</span>
         <span className="topbar-sub">Keuangan Pribadi</span>
+        <button type="button" className="btn btn--ghost" onClick={handleLogout}>Keluar</button>
       </header>
       <main className="content">
         {active === 'beranda' && <DashboardView />}
@@ -73,8 +102,11 @@ export default function App() {
               <button className={subview === 'akun' ? 'selected' : ''} onClick={() => setSubview('akun')}>Akun</button>
               <button className={subview === 'kategori' ? 'selected' : ''} onClick={() => setSubview('kategori')}>Kategori</button>
               <button className={subview === '2fa' ? 'selected' : ''} onClick={() => setSubview('2fa')}>Keamanan (2FA)</button>
+              <button className={subview === 'csv-import' ? 'selected' : ''} onClick={() => setSubview('csv-import')}>Import CSV</button>
+              <button className={subview === 'inbox-review' ? 'selected' : ''} onClick={() => setSubview('inbox-review')}>Inbox Review</button>
+              <button className={subview === 'sources' ? 'selected' : ''} onClick={() => setSubview('sources')}>Sumber Input</button>
             </div>
-            {subview === 'akun' ? <AccountsView /> : subview === 'kategori' ? <CategoriesView /> : <TotpPage />}
+            {subview === 'akun' ? <AccountsView /> : subview === 'kategori' ? <CategoriesView /> : subview === '2fa' ? <TotpPage /> : subview === 'csv-import' ? <CSVImportPage /> : subview === 'inbox-review' ? <InboxReviewPage /> : <SourcesPage />}
           </section>
         )}
       </main>
@@ -425,8 +457,9 @@ function BudgetView() {
   }
 
   if (error) return <InlineError message={error} />
+  if (budgets === null || categories === null) return <p className="muted">Memuat budget...</p>
 
-  const expenseCategories = categories?.filter(c => c.type === 'expense') ?? []
+  const expenseCategories = categories.filter(c => c.type === 'expense')
 
   return (
     <section className="finance-page">
@@ -574,7 +607,7 @@ function CategoriesView() {
   const [error, setError] = useState('')
   useEffect(() => { api<Array<{ id: string; name: string; type: string }>>('/categories').then(setCategories).catch((e: Error) => setError(e.message)) }, [])
   if (error) return <InlineError message={error} />
-  if (!categories) return <p className="muted">Memuat kategori...</p>
+  if (!categories || !Array.isArray(categories)) return <p className="muted">Memuat kategori...</p>
   if (categories.length === 0) return <EmptyState icon="🏷️" title="Belum ada kategori" description="Kategori transaksi akan muncul di sini." />
   return <div className="item-list">{categories.map((category) => <article className="list-card" key={category.id}><strong>{category.name}</strong><span className="muted">{category.type}</span></article>)}</div>
 }
@@ -585,7 +618,14 @@ function TransactionsView() {
   useEffect(() => { api<Transaction[]>('/transactions').then(setTransactions).catch((e: Error) => setError(e.message)) }, [])
   if (error) return <InlineError message={error} />
   if (!transactions) return <p className="muted">Memuat transaksi...</p>
-  return <section className="finance-page"><div className="section-heading"><h1>Transaksi</h1><p>Riwayat pemasukan, pengeluaran, dan transfer.</p></div>{transactions.length === 0 ? <EmptyState icon="💸" title="Belum ada transaksi" description="Catat transaksi lewat WhatsApp atau API Kasku." /> : <div className="item-list">{transactions.map((transaction) => { const sign = transaction.type === 'income' ? '+' : transaction.type === 'expense' ? '-' : ''; return <article className="list-card" key={transaction.id}><div><strong>{transaction.note || transaction.type}</strong><span className="muted">{new Date(transaction.date).toLocaleDateString('id-ID')}</span></div><strong className={transaction.type === 'expense' ? 'negative' : 'positive'}>{sign}{formatIDR(transaction.amount)}</strong></article> })}</div>}</section>
+  return <section className="finance-page"><div className="section-heading"><h1>Transaksi</h1><p>Riwayat pemasukan, pengeluaran, dan transfer.</p></div>{transactions.length === 0 ? <EmptyState icon="💸" title="Belum ada transaksi" description="Catat transaksi lewat WhatsApp atau API Kasku." /> : <div className="item-list">{transactions.map((transaction) => { const sign = transaction.type === 'income' ? '+' : transaction.type === 'expense' ? '-' : ''; return <article className="list-card" key={transaction.id}><div><strong>{transaction.note || transaction.type}</strong><span className="muted">{new Date(transaction.date).toLocaleDateString('id-ID')} <SourceBadge source={transaction.source} /></span></div><strong className={transaction.type === 'expense' ? 'negative' : 'positive'}>{sign}{formatIDR(transaction.amount)}</strong></article> })}</div>}</section>
+}
+
+const SOURCE_LABELS: Record<string, string> = { whatsapp: 'WA', wa: 'WA', web: 'Web', email: 'Email', csv: 'Import', import: 'Import', webhook: 'Webhook', notification: 'Notification', autopay: 'Autopay' }
+const SOURCE_CLASSES: Record<string, string> = { whatsapp: 'blue', wa: 'blue', web: 'gray', email: 'green', csv: 'purple', import: 'purple', webhook: 'orange', notification: 'yellow', autopay: 'teal' }
+function SourceBadge({ source }: { source?: string | null }) {
+  const normalized = (source ?? 'web').toLowerCase()
+  return <span className={`badge badge--source badge--source-${SOURCE_CLASSES[normalized] ?? 'gray'}`}>{SOURCE_LABELS[normalized] ?? source ?? 'Web'}</span>
 }
 
 function InlineError({ message }: { message: string }) { return <div className="inline-error">{message}</div> }
@@ -613,7 +653,7 @@ function DashboardView() {
   }, [cfPeriod])
 
   if (error) return <InlineError message={error} />
-  if (!summary) return <p className="muted">Memuat dashboard...</p>
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary) || !('totalBalance' in summary)) return <p className="muted">Memuat dashboard...</p>
 
   const CATEGORY_COLORS = ['#38bdf8', '#818cf8', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#fb923c']
 
@@ -663,8 +703,8 @@ function DashboardView() {
               <span className={cashflow.net >= 0 ? 'positive' : 'negative'}>{cashflow.net >= 0 ? '+' : ''}{formatIDR(cashflow.net)}</span>
             </div>
             <div className="bar-chart">
-              {(cashflow.breakdown as CashflowRow[]).map((row) => {
-                const maxVal = Math.max(...(cashflow.breakdown as CashflowRow[]).map((r) => Math.max(r.income, r.expense)), 1)
+              {((cashflow.breakdown ?? []) as CashflowRow[]).map((row) => {
+                const maxVal = Math.max(...((cashflow.breakdown ?? []) as CashflowRow[]).map((r) => Math.max(r.income, r.expense)), 1)
                 return (
                   <div key={row.label} className="bar-row">
                     <span className="bar-label">{row.label.slice(5)}</span>
@@ -729,8 +769,8 @@ function DashboardView() {
         {trends ? (
           <>
             <div className="trend-bars">
-              {(trends.months as DashboardMonth[]).map((m) => {
-                const maxVal = Math.max(...(trends.months as DashboardMonth[]).map((mo) => Math.max(mo.income, mo.expense)), 1)
+              {((trends.months ?? []) as DashboardMonth[]).map((m) => {
+                const maxVal = Math.max(...((trends.months ?? []) as DashboardMonth[]).map((mo) => Math.max(mo.income, mo.expense)), 1)
                 return (
                   <div key={m.month} className="trend-month">
                     <div className="trend-label">{m.month}</div>

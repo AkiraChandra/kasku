@@ -41,6 +41,7 @@ export type TransactionRow = {
   date: string
   merchant: string | null
   parentId: string | null
+  status?: string
   deletedAt: string | null
   createdAt: string
 }
@@ -181,7 +182,7 @@ export interface FinanceRepository {
   archiveAccount(userId: string, id: string): Promise<boolean>
   listCategories(userId: string): Promise<CategoryRow[]>
   createCategory(userId: string, input: { name: string; type: string; icon?: string; color?: string }): Promise<CategoryRow>
-  listTransactions(userId: string): Promise<TransactionRow[]>
+  listTransactions(userId: string, filter?: { status?: string }): Promise<TransactionRow[]>
   createTransaction(userId: string, input: CreateTransactionInput): Promise<TransactionRow | TransactionRow[]>
   deleteTransaction(userId: string, id: string): Promise<boolean>
   listBudgets(userId: string): Promise<BudgetRow[]>
@@ -189,6 +190,8 @@ export interface FinanceRepository {
   updateBudget(userId: string, id: string, input: UpdateBudgetInput): Promise<BudgetRow>
   deleteBudget(userId: string, id: string): Promise<boolean>
   getBudgetProgress(userId: string, id: string): Promise<BudgetProgressRow>
+  updateTransaction?(userId: string, id: string, input: { status?: 'pending' | 'confirmed' | 'rejected' }): Promise<TransactionRow>
+  restoreTransaction?(userId: string, id: string): Promise<TransactionRow>
   // Debt methods
   listDebts(userId: string, type?: DebtType): Promise<DebtRow[]>
   createDebt(userId: string, input: CreateDebtInput): Promise<DebtRow>
@@ -214,6 +217,9 @@ const memoryCategories = new Map<string, CategoryRow>()
 const memoryTransactions = new Map<string, TransactionRow>()
 const memoryBudgets = new Map<string, BudgetRow>()
 const memoryDebts = new Map<string, DebtRow>()
+
+// Exported for test seeding only
+export { memoryTransactions }
 const memoryDebtPayments = new Map<string, DebtPaymentRow>()
 const memoryContacts = new Map<string, { id: string; name: string }>()
 const memoryIdempotency = new Map<string, IdempotencyRow>()
@@ -415,9 +421,18 @@ export const inMemoryFinanceRepository: FinanceRepository = {
     return row
   },
 
-  async listTransactions(userId) {
+  async listTransactions(userId, filter?: { status?: string }) {
     return [...memoryTransactions.values()]
-      .filter((row) => row.userId === userId && row.deletedAt === null)
+      .filter((row) => {
+        if (row.userId !== userId) return false
+        if (filter?.status) {
+          const rowStatus = row.status ?? (row.deletedAt ? 'deleted' : 'confirmed')
+          if (rowStatus !== filter.status) return false
+        } else {
+          if (row.deletedAt !== null) return false
+        }
+        return true
+      })
       .sort((a, b) => b.date.localeCompare(a.date))
   },
 
@@ -475,6 +490,29 @@ export const inMemoryFinanceRepository: FinanceRepository = {
       item.deletedAt = now()
     }
     return true
+  },
+
+  async updateTransaction(userId, id, input) {
+    const row = memoryTransactions.get(id)
+    if (!row || row.userId !== userId) throw new Error('TRANSACTION_NOT_FOUND')
+    if (input.status !== undefined) {
+      row.deletedAt = null // clear deletion if re-confirming
+    }
+    return row
+  },
+
+  async restoreTransaction(userId, id) {
+    const row = memoryTransactions.get(id)
+    if (!row || row.userId !== userId) throw new Error('TRANSACTION_NOT_FOUND')
+    row.deletedAt = null
+    // Re-apply balance changes
+    const account = memoryAccounts.get(row.accountId)
+    if (account) {
+      const delta = row.type === 'income' ? row.amount : row.type === 'expense' ? -row.amount : 0
+      account.balance += delta
+      account.updatedAt = now()
+    }
+    return row
   },
 
   async listBudgets(userId) {
@@ -767,7 +805,7 @@ export function createDatabaseFinanceRepository(pool: Pool): FinanceRepository {
       const rows = await db.insert(categories).values({ userId, name: input.name, type: input.type as any, icon: input.icon, color: input.color }).returning()
       return categoryToRow(rows[0])
     },
-    async listTransactions(userId) {
+    async listTransactions(userId, filter?: { status?: string }) {
       const rows = await db.select().from(transactions).where(and(eq(transactions.userId, userId), isNull(transactions.deletedAt))).orderBy(desc(transactions.date))
       return rows.map(transactionToRow)
     },

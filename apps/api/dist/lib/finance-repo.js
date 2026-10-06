@@ -7,6 +7,8 @@ const memoryCategories = new Map();
 const memoryTransactions = new Map();
 const memoryBudgets = new Map();
 const memoryDebts = new Map();
+// Exported for test seeding only
+export { memoryTransactions };
 const memoryDebtPayments = new Map();
 const memoryContacts = new Map();
 const memoryIdempotency = new Map();
@@ -201,9 +203,22 @@ export const inMemoryFinanceRepository = {
         memoryCategories.set(row.id, row);
         return row;
     },
-    async listTransactions(userId) {
+    async listTransactions(userId, filter) {
         return [...memoryTransactions.values()]
-            .filter((row) => row.userId === userId && row.deletedAt === null)
+            .filter((row) => {
+            if (row.userId !== userId)
+                return false;
+            if (filter?.status) {
+                const rowStatus = row.status ?? (row.deletedAt ? 'deleted' : 'confirmed');
+                if (rowStatus !== filter.status)
+                    return false;
+            }
+            else {
+                if (row.deletedAt !== null)
+                    return false;
+            }
+            return true;
+        })
             .sort((a, b) => b.date.localeCompare(a.date));
     },
     async createTransaction(userId, input) {
@@ -264,6 +279,29 @@ export const inMemoryFinanceRepository = {
             item.deletedAt = now();
         }
         return true;
+    },
+    async updateTransaction(userId, id, input) {
+        const row = memoryTransactions.get(id);
+        if (!row || row.userId !== userId)
+            throw new Error('TRANSACTION_NOT_FOUND');
+        if (input.status !== undefined) {
+            row.deletedAt = null; // clear deletion if re-confirming
+        }
+        return row;
+    },
+    async restoreTransaction(userId, id) {
+        const row = memoryTransactions.get(id);
+        if (!row || row.userId !== userId)
+            throw new Error('TRANSACTION_NOT_FOUND');
+        row.deletedAt = null;
+        // Re-apply balance changes
+        const account = memoryAccounts.get(row.accountId);
+        if (account) {
+            const delta = row.type === 'income' ? row.amount : row.type === 'expense' ? -row.amount : 0;
+            account.balance += delta;
+            account.updatedAt = now();
+        }
+        return row;
     },
     async listBudgets(userId) {
         return [...memoryBudgets.values()].filter((row) => row.userId === userId);
@@ -542,7 +580,7 @@ export function createDatabaseFinanceRepository(pool) {
             const rows = await db.insert(categories).values({ userId, name: input.name, type: input.type, icon: input.icon, color: input.color }).returning();
             return categoryToRow(rows[0]);
         },
-        async listTransactions(userId) {
+        async listTransactions(userId, filter) {
             const rows = await db.select().from(transactions).where(and(eq(transactions.userId, userId), isNull(transactions.deletedAt))).orderBy(desc(transactions.date));
             return rows.map(transactionToRow);
         },

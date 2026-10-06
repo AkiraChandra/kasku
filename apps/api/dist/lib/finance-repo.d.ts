@@ -34,6 +34,7 @@ export type TransactionRow = {
     date: string;
     merchant: string | null;
     parentId: string | null;
+    status?: string;
     deletedAt: string | null;
     createdAt: string;
 };
@@ -187,7 +188,9 @@ export interface FinanceRepository {
         icon?: string;
         color?: string;
     }): Promise<CategoryRow>;
-    listTransactions(userId: string): Promise<TransactionRow[]>;
+    listTransactions(userId: string, filter?: {
+        status?: string;
+    }): Promise<TransactionRow[]>;
     createTransaction(userId: string, input: CreateTransactionInput): Promise<TransactionRow | TransactionRow[]>;
     deleteTransaction(userId: string, id: string): Promise<boolean>;
     listBudgets(userId: string): Promise<BudgetRow[]>;
@@ -195,6 +198,10 @@ export interface FinanceRepository {
     updateBudget(userId: string, id: string, input: UpdateBudgetInput): Promise<BudgetRow>;
     deleteBudget(userId: string, id: string): Promise<boolean>;
     getBudgetProgress(userId: string, id: string): Promise<BudgetProgressRow>;
+    updateTransaction?(userId: string, id: string, input: {
+        status?: 'pending' | 'confirmed' | 'rejected';
+    }): Promise<TransactionRow>;
+    restoreTransaction?(userId: string, id: string): Promise<TransactionRow>;
     listDebts(userId: string, type?: DebtType): Promise<DebtRow[]>;
     createDebt(userId: string, input: CreateDebtInput): Promise<DebtRow>;
     getDebt(userId: string, id: string): Promise<DebtRow | null>;
@@ -213,5 +220,7 @@ export interface FinanceRepository {
     saveIdempotency(userId: string, key: string, response: unknown, statusCode: number): Promise<void>;
     audit(userId: string, action: string, entityType: string, entityId: string | null, changes?: unknown): Promise<void>;
 }
+declare const memoryTransactions: Map<string, TransactionRow>;
+export { memoryTransactions };
 export declare const inMemoryFinanceRepository: FinanceRepository;
 export declare function createDatabaseFinanceRepository(pool: Pool): FinanceRepository;

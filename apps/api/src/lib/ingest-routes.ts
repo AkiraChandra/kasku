@@ -14,7 +14,7 @@ import { failure, success } from '../index.js'
 import { checkRateLimit, INGEST_RATE_LIMIT } from './rate-limit.js'
 import { transactions, ingestSources, accounts, categories } from '../db/schema/index.js'
 import { parseAmount } from './money.js'
-import { resolveUser } from './auth-resolver.js'
+import { isAuthorizedForScope, resolveUser } from './auth-resolver.js'
 import { verifyHmac } from './hmac.js'
 import type { AuthRepository } from './auth-repo.js'
 
@@ -41,6 +41,10 @@ const ingestBatchSchema = z.object({
   source_ref_prefix: z.string().optional(),  // prefix for idempotency key
   items:    z.array(ingestTransactionSchema).max(200),
 })
+
+export function buildBatchSourceRef(source: string, prefix: string | undefined, itemRef: string | undefined, index: number): string {
+  return itemRef ?? `${prefix ?? `${source}:`}${index + 1}`
+}
 
 // Deduplication: match by source_ref OR by (amount + account + time within 60min + similar merchant)
 async function findDuplicate(
@@ -86,7 +90,7 @@ async function findDuplicate(
 
     for (const c of candidates) {
       if (parsed.merchant && c.merchant) {
-        const sim = similarity(parsed.merchant.toLowerCase(), parsed.merchant.toLowerCase())
+        const sim = similarity(parsed.merchant.toLowerCase(), c.merchant.toLowerCase())
         if (sim > 0.7) return c.id
       } else if (parsed.occurred_at) {
         const diff = Math.abs(new Date(c.date).getTime() - new Date(parsed.occurred_at).getTime())
@@ -98,7 +102,7 @@ async function findDuplicate(
   return null
 }
 
-function similarity(a: string, b: string): number {
+export function similarity(a: string, b: string): number {
   if (a === b) return 1
   if (!a.length || !b.length) return 0
   const s1 = a.length, s2 = b.length
@@ -106,10 +110,12 @@ function similarity(a: string, b: string): number {
   for (let j = 0; j <= s2; j++) dp[0][j] = j
   for (let i = 1; i <= s1; i++) {
     for (let j = 1; j <= s2; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1])
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
     }
   }
-  return dp[s1][s2] / Math.max(s1, s2)
+  return 1 - dp[s1][s2] / Math.max(s1, s2)
 }
 
 async function resolveAccountId(db: ReturnType<typeof drizzle>, userId: string, hint?: string): Promise<string | null> {
@@ -154,17 +160,20 @@ export function createIngestRoutes(
     await next()
   })
 
-  async function authenticate(c: any): Promise<string | Response> {
+  async function authenticate(c: any, requiredScope?: string): Promise<string | Response> {
     const user = await resolveUser(c, pool, authRepo, sessionCookie)
     if (!user) {
       return c.json(failure('UNAUTHORIZED', 'Autentikasi gagal, sertakan X-Api-Key atau cookie kasku_session'), 401)
+    }
+    if (requiredScope && !isAuthorizedForScope(user, requiredScope)) {
+      return c.json(failure('FORBIDDEN', 'API key tidak memiliki scope yang diperlukan'), 403)
     }
     return user.userId
   }
 
   // GET /ingest/sources — list registered ingest sources
   app.get('/sources', async (c) => {
-    const userId = await authenticate(c)
+    const userId = await authenticate(c, 'web')
     if (userId instanceof Response) return userId
 
     const rows = await db.select().from(ingestSources).where(eq(ingestSources.userId, userId))
@@ -178,7 +187,7 @@ export function createIngestRoutes(
 
   // POST /ingest/transactions — single ingest
   app.post('/transactions', async (c) => {
-    const userId = await authenticate(c)
+    const userId = await authenticate(c, 'ingest:w')
     if (userId instanceof Response) return userId
 
     // Check optional HMAC signature if X-Webhook-Signature header is provided
@@ -266,7 +275,7 @@ export function createIngestRoutes(
 
   // POST /ingest/batch — up to 200 items
   app.post('/batch', async (c) => {
-    const userId = await authenticate(c)
+    const userId = await authenticate(c, 'ingest:w')
     if (userId instanceof Response) return userId
 
     let body: unknown
@@ -281,8 +290,8 @@ export function createIngestRoutes(
     }
 
     const results = []
-    for (const item of parsed.data.items) {
-      const sourceRef = item.source_ref ?? `${parsed.data.source}:${Date.now()}`
+    for (const [index, item] of parsed.data.items.entries()) {
+      const sourceRef = buildBatchSourceRef(parsed.data.source, parsed.data.source_ref_prefix, item.source_ref, index)
       const [source] = await db.select({ trust: ingestSources.trust })
         .from(ingestSources)
         .where(and(eq(ingestSources.userId, userId), eq(ingestSources.name, parsed.data.source)))

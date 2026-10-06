@@ -12,7 +12,7 @@ import { failure, success } from '../index.js';
 import { checkRateLimit, INGEST_RATE_LIMIT } from './rate-limit.js';
 import { transactions, ingestSources, accounts, categories } from '../db/schema/index.js';
 import { parseAmount } from './money.js';
-import { resolveUser } from './auth-resolver.js';
+import { isAuthorizedForScope, resolveUser } from './auth-resolver.js';
 import { verifyHmac } from './hmac.js';
 const ingestTransactionSchema = z.object({
     source: z.string().optional(),
@@ -36,6 +36,9 @@ const ingestBatchSchema = z.object({
     source_ref_prefix: z.string().optional(), // prefix for idempotency key
     items: z.array(ingestTransactionSchema).max(200),
 });
+export function buildBatchSourceRef(source, prefix, itemRef, index) {
+    return itemRef ?? `${prefix ?? `${source}:`}${index + 1}`;
+}
 // Deduplication: match by source_ref OR by (amount + account + time within 60min + similar merchant)
 async function findDuplicate(db, userId, parsed, sourceRef) {
     // 1) source_ref exact match
@@ -72,7 +75,7 @@ async function findDuplicate(db, userId, parsed, sourceRef) {
             .limit(10);
         for (const c of candidates) {
             if (parsed.merchant && c.merchant) {
-                const sim = similarity(parsed.merchant.toLowerCase(), parsed.merchant.toLowerCase());
+                const sim = similarity(parsed.merchant.toLowerCase(), c.merchant.toLowerCase());
                 if (sim > 0.7)
                     return c.id;
             }
@@ -85,7 +88,7 @@ async function findDuplicate(db, userId, parsed, sourceRef) {
     }
     return null;
 }
-function similarity(a, b) {
+export function similarity(a, b) {
     if (a === b)
         return 1;
     if (!a.length || !b.length)
@@ -96,10 +99,12 @@ function similarity(a, b) {
         dp[0][j] = j;
     for (let i = 1; i <= s1; i++) {
         for (let j = 1; j <= s2; j++) {
-            dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+            dp[i][j] = a[i - 1] === b[j - 1]
+                ? dp[i - 1][j - 1]
+                : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
         }
     }
-    return dp[s1][s2] / Math.max(s1, s2);
+    return 1 - dp[s1][s2] / Math.max(s1, s2);
 }
 async function resolveAccountId(db, userId, hint) {
     if (!hint)
@@ -137,16 +142,19 @@ export function createIngestRoutes(pool, authRepo, sessionCookie = 'kasku_sessio
         c.header('X-RateLimit-Reset', String(Math.ceil(result.resetAt / 1000)));
         await next();
     });
-    async function authenticate(c) {
+    async function authenticate(c, requiredScope) {
         const user = await resolveUser(c, pool, authRepo, sessionCookie);
         if (!user) {
             return c.json(failure('UNAUTHORIZED', 'Autentikasi gagal, sertakan X-Api-Key atau cookie kasku_session'), 401);
+        }
+        if (requiredScope && !isAuthorizedForScope(user, requiredScope)) {
+            return c.json(failure('FORBIDDEN', 'API key tidak memiliki scope yang diperlukan'), 403);
         }
         return user.userId;
     }
     // GET /ingest/sources — list registered ingest sources
     app.get('/sources', async (c) => {
-        const userId = await authenticate(c);
+        const userId = await authenticate(c, 'web');
         if (userId instanceof Response)
             return userId;
         const rows = await db.select().from(ingestSources).where(eq(ingestSources.userId, userId));
@@ -159,7 +167,7 @@ export function createIngestRoutes(pool, authRepo, sessionCookie = 'kasku_sessio
     });
     // POST /ingest/transactions — single ingest
     app.post('/transactions', async (c) => {
-        const userId = await authenticate(c);
+        const userId = await authenticate(c, 'ingest:w');
         if (userId instanceof Response)
             return userId;
         // Check optional HMAC signature if X-Webhook-Signature header is provided
@@ -246,7 +254,7 @@ export function createIngestRoutes(pool, authRepo, sessionCookie = 'kasku_sessio
     });
     // POST /ingest/batch — up to 200 items
     app.post('/batch', async (c) => {
-        const userId = await authenticate(c);
+        const userId = await authenticate(c, 'ingest:w');
         if (userId instanceof Response)
             return userId;
         let body;
@@ -262,8 +270,8 @@ export function createIngestRoutes(pool, authRepo, sessionCookie = 'kasku_sessio
             return c.json(failure('VALIDATION_ERROR', err.message, err.path.join('.')), 400);
         }
         const results = [];
-        for (const item of parsed.data.items) {
-            const sourceRef = item.source_ref ?? `${parsed.data.source}:${Date.now()}`;
+        for (const [index, item] of parsed.data.items.entries()) {
+            const sourceRef = buildBatchSourceRef(parsed.data.source, parsed.data.source_ref_prefix, item.source_ref, index);
             const [source] = await db.select({ trust: ingestSources.trust })
                 .from(ingestSources)
                 .where(and(eq(ingestSources.userId, userId), eq(ingestSources.name, parsed.data.source)))

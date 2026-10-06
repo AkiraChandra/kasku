@@ -7,6 +7,12 @@ import { eq } from 'drizzle-orm';
 import { getCookie } from 'hono/cookie';
 import { sessions, users, apiKeys } from '../db/schema/index.js';
 import { hashToken } from './auth.js';
+export function hasApiScope(scopes, requiredScope) {
+    return scopes?.includes(requiredScope) ?? false;
+}
+export function isAuthorizedForScope(user, requiredScope) {
+    return user.authMethod === 'session' || hasApiScope(user.scopes, requiredScope);
+}
 export async function resolveUser(c, pool, authRepo, sessionCookie = 'kasku_session') {
     // 1) Check session cookie
     const token = getCookie(c, sessionCookie);
@@ -46,6 +52,7 @@ export async function resolveUser(c, pool, authRepo, sessionCookie = 'kasku_sess
             email: users.email,
             expiresAt: apiKeys.expiresAt,
             revokedAt: apiKeys.revokedAt,
+            scopes: apiKeys.scopes,
         })
             .from(apiKeys)
             .innerJoin(users, eq(apiKeys.userId, users.id))
@@ -53,13 +60,18 @@ export async function resolveUser(c, pool, authRepo, sessionCookie = 'kasku_sess
             .limit(1);
         const row = rows[0];
         if (row && (!row.expiresAt || row.expiresAt > new Date()) && !row.revokedAt && row.email) {
-            return { userId: row.userId, userEmail: row.email, authMethod: 'api_key' };
+            return { userId: row.userId, userEmail: row.email, authMethod: 'api_key', scopes: row.scopes };
         }
-        // Fallback: if test env / fallback key matches N8N_DIGEST_API_KEY or similar env var
-        if (apiKey === process.env.N8N_DIGEST_API_KEY || apiKey === process.env.INGEST_API_KEY) {
+        // Fallback keys are route-specific; never grant a broad API-key scope.
+        if (apiKey === process.env.INGEST_API_KEY || apiKey === process.env.N8N_DIGEST_API_KEY) {
             const defaultUser = await db.select({ id: users.id, email: users.email }).from(users).limit(1);
             if (defaultUser[0]?.email) {
-                return { userId: defaultUser[0].id, userEmail: defaultUser[0].email, authMethod: 'api_key' };
+                return {
+                    userId: defaultUser[0].id,
+                    userEmail: defaultUser[0].email,
+                    authMethod: 'api_key',
+                    scopes: apiKey === process.env.INGEST_API_KEY ? ['ingest:w'] : ['digest:r'],
+                };
             }
         }
     }

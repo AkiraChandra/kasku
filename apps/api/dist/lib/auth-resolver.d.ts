@@ -4,8 +4,12 @@
  */
 import { Pool } from 'pg';
 import type { AuthRepository } from './auth-repo.js';
-export declare function resolveUser(c: any, pool?: Pool, authRepo?: AuthRepository, sessionCookie?: string): Promise<{
+export type ResolvedUser = {
     userId: string;
     userEmail: string;
     authMethod: 'session' | 'api_key';
-} | null>;
+    scopes?: string[] | null;
+};
+export declare function hasApiScope(scopes: string[] | null | undefined, requiredScope: string): boolean;
+export declare function isAuthorizedForScope(user: Pick<ResolvedUser, 'authMethod' | 'scopes'>, requiredScope: string): boolean;
+export declare function resolveUser(c: any, pool?: Pool, authRepo?: AuthRepository, sessionCookie?: string): Promise<ResolvedUser | null>;

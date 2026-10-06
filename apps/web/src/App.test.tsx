@@ -26,14 +26,33 @@ describe('formatIDR', () => {
   })
 })
 
+describe('auth guard', () => {
+  it('shows the login page when the session is unauthenticated', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      status: 401,
+      ok: false,
+      json: async () => ({ ok: false, error: { message: 'Sesi tidak ditemukan' } }),
+    }))
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Masuk ke Kasku' })).toBeTruthy()
+    expect(screen.queryByText('Dashboard')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+})
+
 describe('finance views', () => {
   it('shows accounts from the API', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
+      return Promise.resolve({
       ok: true,
       json: async () => ({ ok: true, data: [{ id: 'a1', name: 'BCA', type: 'bank', balance: 250000 }] }),
+      })
     }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Lainnya' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Lainnya' }))
     fireEvent.click(screen.getByRole('button', { name: 'Akun' }))
     expect(await screen.findByText('BCA')).toBeTruthy()
     expect(screen.getByText('Rp 250.000')).toBeTruthy()
@@ -41,30 +60,32 @@ describe('finance views', () => {
   })
 
   it('shows transactions from the API', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, data: [{ id: 't1', type: 'expense', amount: 35000, note: 'Nasi goreng', date: '2026-10-04T00:00:00.000Z' }] }),
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [{ id: 't1', type: 'expense', amount: 35000, note: 'Nasi goreng', date: '2026-10-04T00:00:00.000Z' }] }) })
     }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Transaksi' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transaksi' }))
     expect(await screen.findByText('Nasi goreng')).toBeTruthy()
     expect(screen.getByText('-Rp 35.000')).toBeTruthy()
     vi.unstubAllGlobals()
   })
 
   it('shows budget list from the API', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ok: true, data: [] }),
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
     }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Budget' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Budget' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Budget' })).toBeTruthy()
     vi.unstubAllGlobals()
   })
 
   it('shows budget cards with progress', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
+      return Promise.resolve({
       ok: true,
       json: async () => ({
         ok: true,
@@ -77,9 +98,10 @@ describe('finance views', () => {
           periodEnd: '2026-11-01T00:00:00Z',
         }],
       }),
+      })
     }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Budget' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Budget' }))
     expect(await screen.findByText('Budget Makan')).toBeTruthy()
     expect(screen.getByText('Rp 250.000')).toBeTruthy()
     expect(screen.getByText(/Rp 1\.000\.000/)).toBeTruthy()
@@ -89,21 +111,23 @@ describe('finance views', () => {
 
   it('shows empty state when no budgets', async () => {
     let callCount = 0
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
       callCount++
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
       return Promise.resolve({
         ok: true,
         json: async () => ({ ok: true, data: [] }),
       })
     }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Budget' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Budget' }))
     expect(await screen.findByText('Belum ada budget')).toBeTruthy()
     vi.unstubAllGlobals()
   })
 
   it('shows dashboard summary cards', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
       if (path.includes('/dashboard/summary')) {
         return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { totalBalance: 1500000, incomeThisMonth: 500000, expenseThisMonth: 200000, savingsRate: 60 } }) })
       }
@@ -129,6 +153,7 @@ describe('finance views', () => {
 
   it('shows category donut and legend when expenses exist', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
       if (path.includes('/dashboard/summary')) {
         return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { totalBalance: 1000000, incomeThisMonth: 1000000, expenseThisMonth: 300000, savingsRate: 70 } }) })
       }
@@ -151,6 +176,7 @@ describe('finance views', () => {
 
   it('shows trend monthly bars', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
       if (path.includes('/dashboard/summary')) {
         return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: { totalBalance: 2000000, incomeThisMonth: 800000, expenseThisMonth: 400000, savingsRate: 50 } }) })
       }
@@ -172,9 +198,12 @@ describe('finance views', () => {
   })
 
   it('shows Hutang tabs and empty state', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, data: [] }) }))
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
+    }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Hutang' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Hutang' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Hutang' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Hutang saya/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Utang saya/ })).toBeTruthy()
@@ -183,16 +212,19 @@ describe('finance views', () => {
   })
 
   it('renders debt person, remaining amount, due date, and payment action', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((path: string) => {
+      if (path.includes('/auth/me')) return Promise.resolve({ status: 200, ok: true, json: async () => ({ ok: true }) })
+      return Promise.resolve({
       ok: true,
       json: async () => ({ ok: true, data: [{
         id: 'd1', userId: 'u1', contactId: null, personName: 'Budi', type: 'lent_out',
         amount: 1000000, remainingAmount: 250000, currency: 'IDR', description: 'Pinjaman',
         dueDate: '2099-12-31T00:00:00.000Z', status: 'active', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
       }] }),
+      })
     }))
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: 'Hutang' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Hutang' }))
     expect(await screen.findByText('Budi')).toBeTruthy()
     expect(screen.getAllByText('Rp 250.000').length).toBeGreaterThan(0)
     expect(screen.getByText('Pinjaman')).toBeTruthy()

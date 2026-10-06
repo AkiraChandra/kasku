@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 import { failure, success } from '../index.js';
 import { checkRateLimit, API_RATE_LIMIT } from './rate-limit.js';
 import { buildDigest } from './digest.js';
-import { resolveUser } from './auth-resolver.js';
+import { resolveUser, isAuthorizedForScope } from './auth-resolver.js';
 export function createDigestRoutes(pool, authRepo, sessionCookie = 'kasku_session') {
     const app = new Hono();
     function rateLimit(c) {
@@ -21,6 +21,9 @@ export function createDigestRoutes(pool, authRepo, sessionCookie = 'kasku_sessio
         const user = await resolveUser(c, pool, authRepo, sessionCookie);
         if (!user) {
             return c.json(failure('UNAUTHORIZED', 'Sesi tidak ditemukan, silakan login'), 401);
+        }
+        if (user.authMethod === 'api_key' && !isAuthorizedForScope(user, 'digest:r')) {
+            return c.json(failure('FORBIDDEN', 'API key tidak memiliki izin digest:r'), 403);
         }
         return user.userId;
     }

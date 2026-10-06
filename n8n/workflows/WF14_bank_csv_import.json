@@ -1,0 +1,57 @@
+{
+  "name": "WF14 - Import CSV Mutasi Bank",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf14-manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "filePath": "={{$env.BANK_CSV_PATH || '/data/inbox/bank.csv'}}"
+      },
+      "id": "wf14-read-csv",
+      "name": "Read CSV",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "functionCode": "const binary = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst csv = binary.toString('utf8');\nconst lines = csv.replace(/^\\uFEFF/, '').split(/\\r?\\n/).filter(Boolean);\nif (lines.length < 2) return [];\nconst split = (line) => { const cells = []; let cell = ''; let quoted = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (quoted && c === '\"' && line[i + 1] === '\"') { cell += '\"'; i++; } else if (c === '\"') quoted = !quoted; else if (!quoted && c === ',') { cells.push(cell.trim()); cell = ''; } else cell += c; } cells.push(cell.trim()); return cells; };\nconst headers = split(lines[0]).map(h => h.toLowerCase().replace(/[\\s_/-]+/g, ''));\nconst bank = headers.includes('dk') ? 'bca' : headers.includes('jenis') ? 'mandiri' : (() => { throw new Error('Bank CSV tidak dikenali'); })();\nconst at = (name) => { const index = headers.indexOf(name); if (index < 0) throw new Error(`Kolom ${name} tidak ditemukan`); return index; };\nconst dateIndex = at('tanggal'); const merchantIndex = at('keterangan'); const amountIndex = at('jumlah'); const typeIndex = at(bank === 'bca' ? 'dk' : 'jenis');\nconst parseDate = (value) => { const parts = value.split(/[\\/-]/).map(Number); const date = parts[0] > 31 ? new Date(Date.UTC(parts[0], parts[1] - 1, parts[2])) : new Date(Date.UTC(parts[2], parts[1] - 1, parts[0])); if (Number.isNaN(date.getTime())) throw new Error(`Tanggal tidak valid: ${value}`); return date.toISOString(); };\nconst parseAmount = (value) => { const digits = value.replace(/[^0-9,.-]/g, ''); const amount = digits.includes('.') && digits.includes(',') ? Number(digits.replace(/\\./g, '').replace(',', '.')) : Number(digits.replace(/[.,]/g, '')); if (!Number.isSafeInteger(amount)) throw new Error(`Jumlah tidak valid: ${value}`); return Math.abs(amount); };\nconst items = lines.slice(1).map((line, index) => { const row = split(line); const kind = row[typeIndex].toLowerCase(); const type = ['k', 'kredit', 'credit', 'cr', 'c'].includes(kind) ? 'income' : 'expense'; return { source_ref: `${bank}:${index + 1}`, parsed: { occurred_at: parseDate(row[dateIndex]), merchant: row[merchantIndex], amount: parseAmount(row[amountIndex]), type } }; }); const batches = []; for (let i = 0; i < items.length; i += 200) batches.push({ json: { source: `bank_csv_${bank}`, source_ref_prefix: `${bank}:`, items: items.slice(i, i + 200) } }); return batches;"
+      },
+      "id": "wf14-map-rows",
+      "name": "Map Rows to Ingest Format",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [460, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.KASKU_API_URL || 'http://api:3000'}}/api/v1/ingest/batch",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-Api-Key", "value": "={{$env.N8N_INGEST_API_KEY}}" }] },
+        "sendBody": true,
+        "jsonParameters": true,
+        "bodyParametersJson": "={{JSON.stringify($json)}}"
+      },
+      "id": "wf14-post-batch",
+      "name": "POST Ingest Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [720, 0]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Read CSV", "type": "main", "index": 0 }]] },
+    "Read CSV": { "main": [[{ "node": "Map Rows to Ingest Format", "type": "main", "index": 0 }]] },
+    "Map Rows to Ingest Format": { "main": [[{ "node": "POST Ingest Batch", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "kasku" }, { "name": "csv" }]
+}

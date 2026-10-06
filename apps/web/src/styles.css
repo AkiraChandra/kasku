@@ -139,8 +139,7 @@ body {
   .app-shell {
     grid-template-columns: 248px 1fr;
     grid-template-rows: 1fr;
-    max-width: 1368px;
-    margin: 0 auto;
+    width: 100%;
   }
 }
 
@@ -158,7 +157,7 @@ body {
   gap: 12px;
 }
 
-@media (min-width: 1200px) { .topbar { display: none; } }
+@media (min-width: 1200px) { .topbar { display: flex; } }
 
 .topbar-title { font-size: 1.125rem; font-weight: 700; color: var(--color-accent); letter-spacing: -0.01em; }
 .topbar-sub { font-size: 0.75rem; color: var(--color-text-muted); }
@@ -223,7 +222,7 @@ body {
   background: var(--color-surface); border-top: 1px solid var(--color-border);
   padding: 6px 0 calc(6px + env(safe-area-inset-bottom, 0px)); z-index: 20;
 }
-@media (min-width: 1200px) { .bottom-nav { display: none; } }
+@media (min-width: 768px) { .bottom-nav { display: none; } }
 
 .nav-item {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
@@ -348,6 +347,21 @@ body {
   border-radius: 6px; font-size: 0.7rem; font-weight: 600;
 }
 .badge--source { background: var(--color-surface-2); color: var(--color-text-muted); }
+.badge--source-blue { background: #dbeafe; color: #1d4ed8; }
+.badge--source-gray { background: #e5e7eb; color: #374151; }
+.badge--source-green { background: #dcfce7; color: #15803d; }
+.badge--source-purple { background: #f3e8ff; color: #7e22ce; }
+.badge--source-orange { background: #ffedd5; color: #c2410c; }
+.badge--source-yellow { background: #fef9c3; color: #a16207; }
+.badge--source-teal { background: #ccfbf1; color: #0f766e; }
+.badge--trust { margin-top: 4px; width: fit-content; text-transform: capitalize; }
+.badge--trust-review { background: #fef3c7; color: #92400e; }
+.badge--trust-auto { background: #dcfce7; color: #166534; }
+.review-card, .source-card { align-items: flex-start; flex-wrap: wrap; }
+.review-actions { display: flex; gap: 6px; margin-left: auto; }
+.source-stats { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; color: var(--color-text-muted); text-align: right; }
+.source-stats strong { color: var(--color-text); }
+@media (max-width: 600px) { .review-actions, .source-stats { width: 100%; text-align: left; margin-left: 0; } .source-stats { flex-direction: row; justify-content: space-between; } }
 .badge--active { background: color-mix(in srgb, var(--color-income) 15%, transparent); color: var(--color-income); }
 .badge--settled { background: var(--color-border); color: var(--color-text-muted); }
 .badge--cat-0 { background: var(--color-cat-0); color: var(--color-cat-icon-0); }

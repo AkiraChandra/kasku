@@ -172,7 +172,8 @@ export function createFinanceRoutes(financeRepo, authRepo) {
         const user = await requireUser(c);
         if (user instanceof Response)
             return user;
-        return c.json(success(await financeRepo.listTransactions(user)));
+        const status = c.req.query('status');
+        return c.json(success(await financeRepo.listTransactions(user, { status })));
     });
     app.post('/transactions', async (c) => {
         const user = await requireUser(c);
@@ -233,6 +234,53 @@ export function createFinanceRoutes(financeRepo, authRepo) {
             return c.json(failure('NOT_FOUND', 'Transaksi tidak ditemukan'), 404);
         await financeRepo.audit(user, 'delete', 'transaction', id);
         return c.json(success({ id, deleted: true }));
+    });
+    app.patch('/transactions/:id', async (c) => {
+        const user = await requireUser(c);
+        if (user instanceof Response)
+            return user;
+        const id = c.req.param('id');
+        let body;
+        try {
+            body = await c.req.json();
+        }
+        catch {
+            return c.json(failure('INVALID_REQUEST', 'JSON request tidak valid'), 400);
+        }
+        const schema = z.object({ status: z.enum(['pending', 'confirmed', 'rejected']).optional() });
+        const parsed = schema.safeParse(body);
+        if (!parsed.success)
+            return c.json(validationError(parsed.error), 400);
+        try {
+            if (!financeRepo.updateTransaction)
+                return c.json(failure('NOT_IMPLEMENTED', 'Fitur belum didukung'), 501);
+            const row = await financeRepo.updateTransaction(user, id, parsed.data);
+            await financeRepo.audit(user, 'update', 'transaction', id, parsed.data);
+            return c.json(success(row));
+        }
+        catch (error) {
+            if (error instanceof Error && error.message === 'TRANSACTION_NOT_FOUND')
+                return c.json(failure('NOT_FOUND', 'Transaksi tidak ditemukan'), 404);
+            throw error;
+        }
+    });
+    app.post('/transactions/:id/restore', async (c) => {
+        const user = await requireUser(c);
+        if (user instanceof Response)
+            return user;
+        const id = c.req.param('id');
+        try {
+            if (!financeRepo.restoreTransaction)
+                return c.json(failure('NOT_IMPLEMENTED', 'Fitur belum didukung'), 501);
+            const row = await financeRepo.restoreTransaction(user, id);
+            await financeRepo.audit(user, 'restore', 'transaction', id);
+            return c.json(success(row));
+        }
+        catch (error) {
+            if (error instanceof Error && error.message === 'TRANSACTION_NOT_FOUND')
+                return c.json(failure('NOT_FOUND', 'Transaksi tidak ditemukan'), 404);
+            throw error;
+        }
     });
     app.get('/budgets', async (c) => {
         const user = await requireUser(c);

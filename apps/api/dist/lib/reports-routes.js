@@ -5,7 +5,7 @@
 import { Hono } from 'hono';
 import { failure, success } from '../index.js';
 import { checkRateLimit, API_RATE_LIMIT } from './rate-limit.js';
-import { resolveUser } from './auth-resolver.js';
+import { resolveUser, isAuthorizedForScope } from './auth-resolver.js';
 import { buildReportSummary, buildCategoryBreakdown, buildCashflowReport, buildInsights, streamCsvExport, } from './reports.js';
 export function createReportsRoutes(pool, authRepo, sessionCookie = 'kasku_session') {
     const app = new Hono();
@@ -21,6 +21,9 @@ export function createReportsRoutes(pool, authRepo, sessionCookie = 'kasku_sessi
         const user = await resolveUser(c, pool, authRepo, sessionCookie);
         if (!user) {
             return c.json(failure('UNAUTHORIZED', 'Sesi tidak ditemukan, silakan login'), 401);
+        }
+        if (user.authMethod === 'api_key' && !isAuthorizedForScope(user, 'reports:r')) {
+            return c.json(failure('FORBIDDEN', 'API key tidak memiliki izin reports:r'), 403);
         }
         return user.userId;
     }
