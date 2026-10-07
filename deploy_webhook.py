@@ -65,6 +65,6 @@ class WebhookHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"status": "ok", "service": "kasku-deploy-webhook"}')
 
 if __name__ == "__main__":
-    server = HTTPServer(("127.0.0.1", PORT), WebhookHandler)
+    server = HTTPServer(("0.0.0.0", PORT), WebhookHandler)
     print(f"Deploy webhook server running on port {PORT}...")
     server.serve_forever()
