@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import InboxReviewPage from './InboxReviewPage'
-import SourcesPage from './SourcesPage'
+import InboxReviewPage from './pages/InboxReviewPage'
+import SourcesPage from './pages/SourcesPage'
 
 afterEach(() => vi.unstubAllGlobals())
 

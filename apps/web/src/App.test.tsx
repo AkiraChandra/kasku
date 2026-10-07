@@ -1,6 +1,28 @@
-import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
-import { formatIDR, default as App } from '../src/App'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { formatIDR } from './utils/formatters'
+import App from './App'
+
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+beforeAll(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation(query => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(), // deprecated
+      removeListener: vi.fn(), // deprecated
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  })
+})
 
 describe('formatIDR', () => {
   it('formats thousands with dot separator', () => {
@@ -52,7 +74,7 @@ describe('finance views', () => {
       })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Lainnya' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Lainnya' }).then(btns => btns[0]))
     fireEvent.click(screen.getByRole('button', { name: 'Akun' }))
     expect(await screen.findByText('BCA')).toBeTruthy()
     expect(screen.getByText('Rp 250.000')).toBeTruthy()
@@ -65,7 +87,7 @@ describe('finance views', () => {
       return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [{ id: 't1', type: 'expense', amount: 35000, note: 'Nasi goreng', date: '2026-10-04T00:00:00.000Z' }] }) })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Transaksi' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Transaksi' }).then(btns => btns[0]))
     expect(await screen.findByText('Nasi goreng')).toBeTruthy()
     expect(screen.getByText('-Rp 35.000')).toBeTruthy()
     vi.unstubAllGlobals()
@@ -77,7 +99,7 @@ describe('finance views', () => {
       return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Budget' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Budget' }).then(btns => btns[0]))
     expect(await screen.findByRole('heading', { level: 1, name: 'Budget' })).toBeTruthy()
     vi.unstubAllGlobals()
   })
@@ -101,7 +123,7 @@ describe('finance views', () => {
       })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Budget' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Budget' }).then(btns => btns[0]))
     expect(await screen.findByText('Budget Makan')).toBeTruthy()
     expect(screen.getByText('Rp 250.000')).toBeTruthy()
     expect(screen.getByText(/Rp 1\.000\.000/)).toBeTruthy()
@@ -120,7 +142,7 @@ describe('finance views', () => {
       })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Budget' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Budget' }).then(btns => btns[0]))
     expect(await screen.findByText('Belum ada budget')).toBeTruthy()
     vi.unstubAllGlobals()
   })
@@ -203,7 +225,7 @@ describe('finance views', () => {
       return Promise.resolve({ ok: true, json: async () => ({ ok: true, data: [] }) })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Hutang' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Hutang' }).then(btns => btns[0]))
     expect(await screen.findByRole('heading', { level: 1, name: 'Hutang' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Hutang saya/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Utang saya/ })).toBeTruthy()
@@ -224,7 +246,7 @@ describe('finance views', () => {
       })
     }))
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Hutang' }))
+    fireEvent.click(await screen.findAllByRole('button', { name: 'Hutang' }).then(btns => btns[0]))
     expect(await screen.findByText('Budi')).toBeTruthy()
     expect(screen.getAllByText('Rp 250.000').length).toBeGreaterThan(0)
     expect(screen.getByText('Pinjaman')).toBeTruthy()
